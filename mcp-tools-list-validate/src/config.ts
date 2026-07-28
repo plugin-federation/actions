@@ -1,7 +1,28 @@
 import { UsageError, type ActionConfig, type Profile } from "./types.ts";
 
-function env(name: string): string {
-  return (process.env[name] ?? "").trim();
+/**
+ * Read a GitHub Actions input.
+ *
+ * The runner exposes inputs as environment variables named `INPUT_<name>` with
+ * the input name uppercased. Spaces become underscores; hyphens may be kept
+ * (`INPUT_TOOLS-LIST-FILE`) or converted (`INPUT_TOOLS_LIST_FILE`) depending on
+ * runner version. Accept both so local and GHA invocations work.
+ */
+function input(name: string): string {
+  const upper = name.toUpperCase();
+  const underscored = name.replace(/[ -]/g, "_").toUpperCase();
+  const candidates = [
+    `INPUT_${underscored}`,
+    `INPUT_${upper}`,
+    `INPUT_${name.replace(/ /g, "_").toUpperCase()}`,
+  ];
+  for (const key of candidates) {
+    if (Object.prototype.hasOwnProperty.call(process.env, key)) {
+      return (process.env[key] ?? "").trim();
+    }
+  }
+  // Fall back to first candidate even if unset
+  return (process.env[candidates[0]] ?? "").trim();
 }
 
 function parseBool(raw: string, defaultValue: boolean): boolean {
@@ -30,41 +51,41 @@ function parseProfile(raw: string): Profile {
 }
 
 export function loadConfig(): ActionConfig {
-  const toolsListFile = env("INPUT_TOOLS_LIST_FILE");
-  const mcpConfigFile = env("INPUT_MCP_CONFIG_FILE");
+  const toolsListFile = input("tools-list-file");
+  const mcpConfigFile = input("mcp-config-file");
 
   if (toolsListFile && mcpConfigFile) {
     throw new UsageError(
-      "usage: specify exactly one of tools-list-file or mcp-config-file",
+      "usage: specify exactly one of tools-list-file or mcp-config-file (both were set)",
     );
   }
   if (!toolsListFile && !mcpConfigFile) {
     throw new UsageError(
-      "usage: specify exactly one of tools-list-file or mcp-config-file",
+      "usage: specify exactly one of tools-list-file or mcp-config-file (neither was set)",
     );
   }
 
-  const maxToolsRaw = env("INPUT_MAX_TOOLS");
-  const allowedHostsRaw = env("INPUT_ALLOWED_HOSTS");
+  const maxToolsRaw = input("max-tools");
+  const allowedHostsRaw = input("allowed-hosts");
 
   return {
     toolsListFile,
     mcpConfigFile,
-    profile: parseProfile(env("INPUT_PROFILE")),
-    failOnWarnings: parseBool(env("INPUT_FAIL_ON_WARNINGS"), false),
-    failOnIncompleteList: parseBool(env("INPUT_FAIL_ON_INCOMPLETE_LIST"), false),
-    reportFile: env("INPUT_REPORT_FILE") || "mcp-tools-list-report.json",
-    sarifFile: env("INPUT_SARIF_FILE"),
-    githubAnnotations: parseBool(env("INPUT_GITHUB_ANNOTATIONS"), true),
-    maxBytes: parseIntEnv(env("INPUT_MAX_BYTES"), 20 * 1024 * 1024, "max-bytes"),
+    profile: parseProfile(input("profile")),
+    failOnWarnings: parseBool(input("fail-on-warnings"), false),
+    failOnIncompleteList: parseBool(input("fail-on-incomplete-list"), false),
+    reportFile: input("report-file") || "mcp-tools-list-report.json",
+    sarifFile: input("sarif-file"),
+    githubAnnotations: parseBool(input("github-annotations"), true),
+    maxBytes: parseIntEnv(input("max-bytes"), 20 * 1024 * 1024, "max-bytes"),
     maxTools: maxToolsRaw === "" ? 5000 : parseIntEnv(maxToolsRaw, 5000, "max-tools"),
-    maxPages: parseIntEnv(env("INPUT_MAX_PAGES"), 50, "max-pages"),
-    timeoutMs: parseIntEnv(env("INPUT_TIMEOUT_MS"), 30_000, "timeout-ms"),
-    deadlineMs: parseIntEnv(env("INPUT_DEADLINE_MS"), 120_000, "deadline-ms"),
-    allowInsecureHttp: parseBool(env("INPUT_ALLOW_INSECURE_HTTP"), false),
+    maxPages: parseIntEnv(input("max-pages"), 50, "max-pages"),
+    timeoutMs: parseIntEnv(input("timeout-ms"), 30_000, "timeout-ms"),
+    deadlineMs: parseIntEnv(input("deadline-ms"), 120_000, "deadline-ms"),
+    allowInsecureHttp: parseBool(input("allow-insecure-http"), false),
     allowedHosts: allowedHostsRaw
       ? allowedHostsRaw.split(",").map((h) => h.trim()).filter(Boolean)
       : [],
-    mcpSchemaVersion: env("INPUT_MCP_SCHEMA_VERSION") || "2025-06-18",
+    mcpSchemaVersion: input("mcp-schema-version") || "2025-06-18",
   };
 }
