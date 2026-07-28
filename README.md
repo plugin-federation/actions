@@ -1,22 +1,16 @@
 # Plugin Federation Actions
 
-Apache-2.0 **hermetic GitHub Actions** for MCP developers and Plugin Federation
-customers.
+Apache-2.0 GitHub Actions for MCP developers and Plugin Federation customers.
 
 ```yaml
 uses: plugin-federation/actions/mcp-tools-list-validate@v1
 ```
 
-**Consumer jobs never run `npm install` / `npm ci` for these Actions.** Each
-Action ships a pre-bundled `dist/` entrypoint executed by the Actions Node
-runtime (`runs.using: node20`). No `setup-node` step is required in the
-caller's workflow.
-
 ## Actions
 
 | Action | Path | Status |
 |---|---|---|
-| MCP `tools/list` validate | [`mcp-tools-list-validate/`](./mcp-tools-list-validate/) | Mode A (hermetic) |
+| MCP `tools/list` validate | [`mcp-tools-list-validate/`](./mcp-tools-list-validate/) | Mode A |
 
 ### `mcp-tools-list-validate`
 
@@ -33,12 +27,12 @@ See [mcp-tools-list-validate/README.md](./mcp-tools-list-validate/README.md).
 
 ```text
 mcp-tools-list-validate/   # first Action (committed dist/)
-.github/workflows/         # maintainer CI only
+.github/workflows/         # maintainer CI
 ```
 
 ## Development (maintainers)
 
-Maintainer CI uses Node 24. The hermetic Action runtime remains Node 20.
+Maintainer CI uses Node 24. The Action runtime is Node 20 (`runs.using: node20`).
 
 ```bash
 cd mcp-tools-list-validate
