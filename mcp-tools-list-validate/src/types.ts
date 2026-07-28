@@ -65,6 +65,8 @@ export interface NormalizedCatalog {
 export interface ActionConfig {
   toolsListFile: string;
   mcpConfigFile: string;
+  /** When mcpServers has multiple entries, select by key. Empty = require exactly one. */
+  mcpServer: string;
   profile: Profile;
   failOnWarnings: boolean;
   failOnIncompleteList: boolean;
@@ -79,6 +81,21 @@ export interface ActionConfig {
   allowInsecureHttp: boolean;
   allowedHosts: string[];
   mcpSchemaVersion: string;
+}
+
+/** Industry-standard mcpServers entry (Claude Desktop / Cursor / VS Code). */
+export interface McpServerEntry {
+  /** Display key from mcpServers object */
+  name: string;
+  transport: "stdio" | "http";
+  /** stdio */
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  /** http / streamable HTTP */
+  url?: string;
+  headers?: Record<string, string>;
 }
 
 export class UsageError extends Error {

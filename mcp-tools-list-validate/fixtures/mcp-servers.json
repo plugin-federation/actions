@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mock": {
+      "command": "node",
+      "args": ["fixtures/mock-stdio-server.mjs"]
+    }
+  }
+}

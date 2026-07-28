@@ -38,3 +38,11 @@ jobs:
           INPUT_PROFILE: plugin-federation
           INPUT_REPORT_FILE: ${{ runner.temp }}/mcp-tools-list-report.json
           INPUT_GITHUB_ANNOTATIONS: "false"
+      - name: Smoke Mode B (mcpServers stdio mock)
+        run: node mcp-tools-list-validate/dist/index.cjs
+        working-directory: ${{ github.workspace }}
+        env:
+          INPUT_MCP_CONFIG_FILE: mcp-tools-list-validate/fixtures/mcp-servers.json
+          INPUT_PROFILE: plugin-federation
+          INPUT_REPORT_FILE: ${{ runner.temp }}/mcp-tools-list-report-live.json
+          INPUT_GITHUB_ANNOTATIONS: "false"

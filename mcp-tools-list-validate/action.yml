@@ -13,7 +13,11 @@ inputs:
     required: false
     default: ""
   mcp-config-file:
-    description: "Mode B: path to MCP client config JSON (mutually exclusive with tools-list-file). Not implemented until a tagged release with Mode B."
+    description: "Mode B: path to mcpServers JSON config (Claude Desktop / Cursor / VS Code format). Mutually exclusive with tools-list-file. Secrets via ${VAR} expanded from the job environment."
+    required: false
+    default: ""
+  mcp-server:
+    description: "Mode B: server key under mcpServers when the config defines more than one"
     required: false
     default: ""
   profile:

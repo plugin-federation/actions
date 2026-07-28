@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { loadConfig } from "./config.ts";
 import { computeDigests } from "./digest.ts";
 import { setOutputs } from "./github.ts";
+import { parseMcpServersDocument } from "./mcp/config.ts";
+import { listToolsLive } from "./mcp/list-tools.ts";
 import { parseJsonBytes, normalizeToolsPayload } from "./parse.ts";
 import {
   readFileLimited,
@@ -14,6 +16,8 @@ import {
   InternalError,
   UsageError,
   type Digest,
+  type InputMode,
+  type NormalizedCatalog,
   type ResultStatus,
 } from "./types.ts";
 
@@ -34,22 +38,46 @@ function decideResult(
 export async function main(): Promise<number> {
   const config = loadConfig();
 
-  if (config.mcpConfigFile) {
-    throw new UsageError(
-      "Mode B (mcp-config-file / live MCP) is not implemented in this release yet; use tools-list-file (Mode A)",
-    );
-  }
-
   if (config.mcpSchemaVersion !== "2025-06-18") {
     throw new UsageError(
       `unsupported mcp-schema-version: ${config.mcpSchemaVersion} (only 2025-06-18)`,
     );
   }
 
-  const inputPath = resolveInputPath(config.toolsListFile);
-  const bytes = readFileLimited(inputPath, config.maxBytes);
-  const raw = parseJsonBytes(bytes);
-  const catalog = normalizeToolsPayload(raw);
+  let catalog: NormalizedCatalog;
+  let inputMode: InputMode;
+  let inputPath: string;
+  let inputSha256: string;
+  let byteLength: number;
+  let mcpHost: string | undefined;
+
+  if (config.toolsListFile) {
+    inputMode = "file";
+    inputPath = config.toolsListFile;
+    const resolved = resolveInputPath(config.toolsListFile);
+    const bytes = readFileLimited(resolved, config.maxBytes);
+    inputSha256 = digestOf(bytes);
+    byteLength = bytes.length;
+    catalog = normalizeToolsPayload(parseJsonBytes(bytes));
+  } else {
+    inputMode = "live";
+    inputPath = config.mcpConfigFile;
+    const resolved = resolveInputPath(config.mcpConfigFile);
+    const bytes = readFileLimited(resolved, config.maxBytes);
+    inputSha256 = digestOf(bytes);
+    byteLength = bytes.length;
+    const raw = parseJsonBytes(bytes);
+    const server = parseMcpServersDocument(raw, config.mcpServer);
+    const live = await listToolsLive(server, config);
+    mcpHost = live.mcpHost;
+    catalog = normalizeToolsPayload({
+      tools: live.tools,
+      ...(live.nextCursor ? { nextCursor: live.nextCursor } : {}),
+    });
+    console.log(
+      `mode=live server=${server.name} transport=${server.transport} tools=${live.tools.length}`,
+    );
+  }
 
   const findings = runRules(catalog, {
     profile: config.profile,
@@ -77,15 +105,21 @@ export async function main(): Promise<number> {
   const reportPath = resolveOutputPath(config.reportFile);
   const report = buildReport({
     config,
-    inputMode: "file",
-    inputPath: config.toolsListFile,
-    inputSha256: digestOf(bytes),
-    byteLength: bytes.length,
+    inputMode,
+    inputPath,
+    inputSha256,
+    byteLength,
     catalog,
     digests,
     findings,
     result,
   });
+  if (mcpHost) {
+    report.input.mcpHost = mcpHost;
+    report.input.provenanceHint = "live-mcp";
+  } else if (inputMode === "live") {
+    report.input.provenanceHint = "live-mcp";
+  }
   writeReport(reportPath, report);
 
   if (config.githubAnnotations) {
@@ -105,11 +139,11 @@ export async function main(): Promise<number> {
     "report-file": reportPath,
     "tools-array-digest": toolsArrayDigest,
     "pf-tool-catalog-digest": pfCatalogDigest,
-    "input-mode": "file",
+    "input-mode": inputMode,
   });
 
   console.log(
-    `mode=file result=${result} errors=${errorCount} warnings=${warningCount} tools=${catalog.tools.length}`,
+    `mode=${inputMode} result=${result} errors=${errorCount} warnings=${warningCount} tools=${catalog.tools.length}`,
   );
 
   return result === "pass" ? 0 : 1;
