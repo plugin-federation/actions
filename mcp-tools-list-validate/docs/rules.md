@@ -45,14 +45,7 @@ Normative product summary:
 | `PFMTL-ENV-002` | **Yes (PF)** | Composition envelope | |
 | `PFMTL-SEC-001` | **Yes (heuristic)** | Best-effort warning | Never fail-closed by default |
 
-### Monorepo drift (not fixed in composition yet)
-
-`packages/contracts` `$defs/toolName` and `crates/composition` `valid_tool_name` still use:
-
-- maxLength **255**
-- pattern `^[A-Za-z0-9][A-Za-z0-9._:-]*$` (allows `:`, disallows `/`)
-
-That is **not** SEP-986. This Action is authoritative for customer MCP name checks; align composition via a follow-up monorepo change.
+Monorepo composition and contracts `$defs/toolName` use the same SEP-986 rule.
 
 ## Name rules (normative)
 
