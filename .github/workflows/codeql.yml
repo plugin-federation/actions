@@ -9,15 +9,39 @@ on:
 
 permissions:
   contents: read
+  actions: read
   security-events: write
 
 jobs:
   analyze:
+    name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Application / Action TypeScript sources
+          - language: javascript-typescript
+            build-mode: none
+          # .github/workflows/** and composite action.yml security queries
+          - language: actions
+            build-mode: none
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: github/codeql-action/init@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
         with:
-          languages: javascript-typescript
-      - uses: github/codeql-action/autobuild@v4
-      - uses: github/codeql-action/analyze@v4
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # Default + security-extended for Actions (e.g. unpinned actions, missing permissions)
+          queries: security-extended,security-and-quality
+
+      - name: Autobuild
+        if: matrix.build-mode == 'autobuild'
+        uses: github/codeql-action/autobuild@v4
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
