@@ -1,0 +1,15 @@
+{
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Fetch weather for a city",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "city": { "type": "string" }
+        },
+        "required": ["city"]
+      }
+    }
+  ]
+}

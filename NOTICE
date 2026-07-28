@@ -1,0 +1,13 @@
+Plugin Federation Actions
+Copyright 2026 Plugin Federation contributors
+
+This product includes software developed at Plugin Federation
+(https://www.plugin-federation.com/).
+
+Licensed under the Apache License, Version 2.0.
+See the LICENSE file in the root of this repository.
+
+This product may include MCP schema fragments derived from the
+Model Context Protocol project (https://modelcontextprotocol.io/),
+used under its applicable license. Attribution for vendored fragments
+appears with those files when present.

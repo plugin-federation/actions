@@ -1,0 +1,9 @@
+{
+  "tools": [
+    {
+      "name": "bad name",
+      "description": "Invalid PF name",
+      "inputSchema": { "type": "object" }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@plugin-federation/mcp-tools-list-validate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Validate MCP tools/list catalogs (Mode A file / Mode B live)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/index.js --legal-comments=none",
+    "test": "node --experimental-strip-types --test test/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "canonicalize": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.5",
+    "typescript": "^5.8.3"
+  }
+}
