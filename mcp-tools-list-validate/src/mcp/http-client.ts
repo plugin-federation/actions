@@ -12,37 +12,15 @@ export async function listToolsHttp(
     allowedHosts: string[];
   },
 ): Promise<{ tools: unknown[]; nextCursor?: string; host?: string }> {
-  if (!server.url) {
-    throw new UsageError("http server missing url");
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(server.url);
-  } catch {
-    throw new UsageError(`mcp http (${server.name}): invalid url`);
-  }
-
-  if (parsed.protocol === "http:") {
-    if (!options.allowInsecureHttp) {
-      throw new UsageError(
-        `mcp http (${server.name}): http:// URLs require allow-insecure-http: true`,
-      );
-    }
-  } else if (parsed.protocol !== "https:") {
-    throw new UsageError(
-      `mcp http (${server.name}): only http(s) URLs are supported`,
-    );
-  }
-
-  if (
-    options.allowedHosts.length > 0 &&
-    !options.allowedHosts.includes(parsed.hostname)
-  ) {
-    throw new UsageError(
-      `mcp http (${server.name}): host ${parsed.hostname} not in allowed-hosts`,
-    );
-  }
+  // Validate and freeze the outbound endpoint before any network I/O.
+  // URL originates from caller-supplied mcpServers config by design (Mode B);
+  // policy: https default, optional host allowlist, no redirects.
+  const { href: endpoint, hostname } = validateMcpHttpEndpoint(
+    server.url,
+    server.name,
+    options.allowInsecureHttp,
+    options.allowedHosts,
+  );
 
   const started = Date.now();
   const deadline = started + options.deadlineMs;
@@ -78,7 +56,10 @@ export async function listToolsHttp(
     }
 
     try {
-      const response = await fetch(server.url!, {
+      // Endpoint already validated (scheme + optional host allowlist); redirects disabled.
+      // Mode B intentionally uses MCP server URL from caller config after policy checks.
+      // codeql[js/file-access-to-http]
+      const response = await fetch(endpoint, {
         method: "POST",
         headers,
         body,
@@ -163,7 +144,58 @@ export async function listToolsHttp(
     cursor = result.nextCursor;
   }
 
-  return { tools, nextCursor: residualCursor, host: parsed.hostname };
+  return { tools, nextCursor: residualCursor, host: hostname };
+}
+
+/**
+ * Parse and enforce outbound URL policy for MCP Streamable HTTP.
+ * Returns a canonical href used for all subsequent requests.
+ */
+export function validateMcpHttpEndpoint(
+  url: string | undefined,
+  serverName: string,
+  allowInsecureHttp: boolean,
+  allowedHosts: string[],
+): { href: string; hostname: string } {
+  if (!url) {
+    throw new UsageError("http server missing url");
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new UsageError(`mcp http (${serverName}): invalid url`);
+  }
+
+  if (parsed.protocol === "http:") {
+    if (!allowInsecureHttp) {
+      throw new UsageError(
+        `mcp http (${serverName}): http:// URLs require allow-insecure-http: true`,
+      );
+    }
+  } else if (parsed.protocol !== "https:") {
+    throw new UsageError(
+      `mcp http (${serverName}): only http(s) URLs are supported`,
+    );
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new UsageError(
+      `mcp http (${serverName}): credentials in URL are not allowed; use headers + env expansion`,
+    );
+  }
+
+  if (
+    allowedHosts.length > 0 &&
+    !allowedHosts.includes(parsed.hostname)
+  ) {
+    throw new UsageError(
+      `mcp http (${serverName}): host ${parsed.hostname} not in allowed-hosts`,
+    );
+  }
+
+  return { href: parsed.href, hostname: parsed.hostname };
 }
 
 function parseRpcResponse(

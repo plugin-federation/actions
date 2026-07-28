@@ -8098,31 +8098,12 @@ function parseMcpServersDocument(raw, selectedServer) {
 
 // src/mcp/http-client.ts
 async function listToolsHttp(server, options) {
-  if (!server.url) {
-    throw new UsageError("http server missing url");
-  }
-  let parsed;
-  try {
-    parsed = new URL(server.url);
-  } catch {
-    throw new UsageError(`mcp http (${server.name}): invalid url`);
-  }
-  if (parsed.protocol === "http:") {
-    if (!options.allowInsecureHttp) {
-      throw new UsageError(
-        `mcp http (${server.name}): http:// URLs require allow-insecure-http: true`
-      );
-    }
-  } else if (parsed.protocol !== "https:") {
-    throw new UsageError(
-      `mcp http (${server.name}): only http(s) URLs are supported`
-    );
-  }
-  if (options.allowedHosts.length > 0 && !options.allowedHosts.includes(parsed.hostname)) {
-    throw new UsageError(
-      `mcp http (${server.name}): host ${parsed.hostname} not in allowed-hosts`
-    );
-  }
+  const { href: endpoint, hostname } = validateMcpHttpEndpoint(
+    server.url,
+    server.name,
+    options.allowInsecureHttp,
+    options.allowedHosts
+  );
   const started = Date.now();
   const deadline = started + options.deadlineMs;
   let sessionId;
@@ -8147,7 +8128,7 @@ async function listToolsHttp(server, options) {
       headers["mcp-session-id"] = sessionId;
     }
     try {
-      const response = await fetch(server.url, {
+      const response = await fetch(endpoint, {
         method: "POST",
         headers,
         body,
@@ -8222,7 +8203,40 @@ async function listToolsHttp(server, options) {
     }
     cursor = result.nextCursor;
   }
-  return { tools, nextCursor: residualCursor, host: parsed.hostname };
+  return { tools, nextCursor: residualCursor, host: hostname };
+}
+function validateMcpHttpEndpoint(url, serverName, allowInsecureHttp, allowedHosts) {
+  if (!url) {
+    throw new UsageError("http server missing url");
+  }
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new UsageError(`mcp http (${serverName}): invalid url`);
+  }
+  if (parsed.protocol === "http:") {
+    if (!allowInsecureHttp) {
+      throw new UsageError(
+        `mcp http (${serverName}): http:// URLs require allow-insecure-http: true`
+      );
+    }
+  } else if (parsed.protocol !== "https:") {
+    throw new UsageError(
+      `mcp http (${serverName}): only http(s) URLs are supported`
+    );
+  }
+  if (parsed.username || parsed.password) {
+    throw new UsageError(
+      `mcp http (${serverName}): credentials in URL are not allowed; use headers + env expansion`
+    );
+  }
+  if (allowedHosts.length > 0 && !allowedHosts.includes(parsed.hostname)) {
+    throw new UsageError(
+      `mcp http (${serverName}): host ${parsed.hostname} not in allowed-hosts`
+    );
+  }
+  return { href: parsed.href, hostname: parsed.hostname };
 }
 function parseRpcResponse(text, contentType, serverName) {
   if (contentType.includes("text/event-stream")) {
@@ -8590,24 +8604,36 @@ function resolveOutputPath(userPath) {
   return import_node_path.default.resolve(workspace || process.cwd(), userPath);
 }
 function readFileLimited(filePath, maxBytes) {
-  let st;
+  let fd;
   try {
-    st = import_node_fs2.default.statSync(filePath);
+    fd = import_node_fs2.default.openSync(filePath, "r");
   } catch {
     throw new UsageError(`file not found or unreadable: ${filePath}`);
   }
-  if (!st.isFile()) {
-    throw new UsageError(`not a regular file: ${filePath}`);
-  }
-  if (st.size > maxBytes) {
-    throw new UsageError(
-      `file exceeds max-bytes (${st.size} > ${maxBytes}): ${filePath}`
-    );
-  }
   try {
-    return import_node_fs2.default.readFileSync(filePath);
-  } catch {
+    const st = import_node_fs2.default.fstatSync(fd);
+    if (!st.isFile()) {
+      throw new UsageError(`not a regular file: ${filePath}`);
+    }
+    if (st.size > maxBytes) {
+      throw new UsageError(
+        `file exceeds max-bytes (${st.size} > ${maxBytes}): ${filePath}`
+      );
+    }
+    const buf = Buffer.alloc(st.size);
+    const bytesRead = import_node_fs2.default.readSync(fd, buf, 0, st.size, 0);
+    if (bytesRead !== st.size) {
+      throw new UsageError(`short read for file: ${filePath}`);
+    }
+    return buf;
+  } catch (error) {
+    if (error instanceof UsageError) throw error;
     throw new UsageError(`failed to read file: ${filePath}`);
+  } finally {
+    try {
+      import_node_fs2.default.closeSync(fd);
+    } catch {
+    }
   }
 }
 

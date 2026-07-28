@@ -53,24 +53,42 @@ export function resolveOutputPath(userPath: string): string {
   return path.resolve(workspace || process.cwd(), userPath);
 }
 
+/**
+ * Read a file with a size cap, using a single open + fstat + read so the
+ * metadata and contents come from the same file descriptor (avoids TOCTOU
+ * between separate statSync and readFileSync).
+ */
 export function readFileLimited(filePath: string, maxBytes: number): Buffer {
-  let st: fs.Stats;
+  let fd: number;
   try {
-    st = fs.statSync(filePath);
+    fd = fs.openSync(filePath, "r");
   } catch {
     throw new UsageError(`file not found or unreadable: ${filePath}`);
   }
-  if (!st.isFile()) {
-    throw new UsageError(`not a regular file: ${filePath}`);
-  }
-  if (st.size > maxBytes) {
-    throw new UsageError(
-      `file exceeds max-bytes (${st.size} > ${maxBytes}): ${filePath}`,
-    );
-  }
   try {
-    return fs.readFileSync(filePath);
-  } catch {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) {
+      throw new UsageError(`not a regular file: ${filePath}`);
+    }
+    if (st.size > maxBytes) {
+      throw new UsageError(
+        `file exceeds max-bytes (${st.size} > ${maxBytes}): ${filePath}`,
+      );
+    }
+    const buf = Buffer.alloc(st.size);
+    const bytesRead = fs.readSync(fd, buf, 0, st.size, 0);
+    if (bytesRead !== st.size) {
+      throw new UsageError(`short read for file: ${filePath}`);
+    }
+    return buf;
+  } catch (error) {
+    if (error instanceof UsageError) throw error;
     throw new UsageError(`failed to read file: ${filePath}`);
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* ignore */
+    }
   }
 }
