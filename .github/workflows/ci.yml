@@ -24,6 +24,11 @@ jobs:
           cache-dependency-path: mcp-tools-list-validate/package-lock.json
       - run: npm ci
       - run: npm test
+      - name: Live MCP tools/list (public + GitHub when token available)
+        run: npm run test:live
+        env:
+          # Actions GITHUB_TOKEN works for GitHub remote MCP tools/list
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and verify committed dist is fresh
         run: |
           npm run build
@@ -46,3 +51,22 @@ jobs:
           INPUT_PROFILE: plugin-federation
           INPUT_REPORT_FILE: ${{ runner.temp }}/mcp-tools-list-report-live.json
           INPUT_GITHUB_ANNOTATIONS: "false"
+      - name: Smoke Mode B against DeepWiki (public remote)
+        run: node mcp-tools-list-validate/dist/index.cjs
+        working-directory: ${{ github.workspace }}
+        env:
+          INPUT_MCP_CONFIG_FILE: mcp-tools-list-validate/fixtures/live-mcp-servers.json
+          INPUT_MCP_SERVER: deepwiki
+          INPUT_PROFILE: mcp
+          INPUT_REPORT_FILE: ${{ runner.temp }}/mcp-tools-list-report-deepwiki.json
+          INPUT_GITHUB_ANNOTATIONS: "false"
+      - name: Smoke Mode B against GitHub MCP (token)
+        run: node mcp-tools-list-validate/dist/index.cjs
+        working-directory: ${{ github.workspace }}
+        env:
+          INPUT_MCP_CONFIG_FILE: mcp-tools-list-validate/fixtures/live-mcp-servers.json
+          INPUT_MCP_SERVER: github
+          INPUT_PROFILE: mcp
+          INPUT_REPORT_FILE: ${{ runner.temp }}/mcp-tools-list-report-github.json
+          INPUT_GITHUB_ANNOTATIONS: "false"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

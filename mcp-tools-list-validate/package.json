@@ -11,7 +11,9 @@
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.cjs --legal-comments=none",
     "check:dist": "npm run build && git diff --exit-code -- dist/index.cjs",
-    "test": "node --experimental-strip-types --test test/**/*.test.ts",
+    "test": "node --experimental-strip-types --test test/parse.test.ts test/paths.test.ts test/rules.test.ts test/mcp-config.test.ts test/mcp-stdio.test.ts",
+    "test:live": "node --experimental-strip-types --test test/live-mcp.test.ts",
+    "test:all": "npm test && npm run test:live",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
