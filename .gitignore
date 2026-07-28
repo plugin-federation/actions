@@ -5,9 +5,9 @@ coverage/
 .idea/
 .vscode/
 
-# dist is released on tags only — never commit from main development
-mcp-tools-list-validate/dist/
-
-# local reports
+# local reports from smoke runs
 mcp-tools-list-report.json
 *.sarif
+
+# dist/ is COMMITTED (hermetic Action — consumers never npm install)
+# rebuild with: cd mcp-tools-list-validate && npm ci && npm run build

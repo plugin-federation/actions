@@ -2,24 +2,23 @@
   "name": "@plugin-federation/mcp-tools-list-validate",
   "version": "0.1.0",
   "private": true,
-  "description": "Validate MCP tools/list catalogs (Mode A file / Mode B live)",
+  "description": "Validate MCP tools/list catalogs (Mode A file / Mode B live). Consumers run pre-bundled dist only — no npm install.",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=20"
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/index.js --legal-comments=none",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.cjs --legal-comments=none",
+    "check:dist": "npm run build && git diff --exit-code -- dist/index.cjs",
     "test": "node --experimental-strip-types --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
+  "devDependencies": {
+    "@types/node": "^20.17.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
-    "canonicalize": "^2.1.0"
-  },
-  "devDependencies": {
-    "@types/node": "^24.0.0",
+    "canonicalize": "^2.1.0",
     "esbuild": "^0.25.5",
     "typescript": "^5.8.3"
   }

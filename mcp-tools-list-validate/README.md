@@ -9,7 +9,19 @@ Deterministic validation of MCP **`tools/list`** catalogs for CI.
     profile: plugin-federation
 ```
 
-> Pin a **release tag** that includes `dist/`. `@main` is unsupported.
+## Zero consumer dependencies
+
+This is a **hermetic JavaScript Action** (`runs.using: node20`):
+
+| Consumer job | What happens |
+|---|---|
+| `npm install` / `npm ci` | **Never** — not used by this Action |
+| `actions/setup-node` | **Not required** — Actions runner provides Node 20 |
+| Runtime payload | Single committed file: `dist/index.cjs` (Ajv and all libs **bundled**) |
+
+You only need the Action pin. No lockfile, no registry access, no package install step in your workflow.
+
+Maintainers rebuild `dist/` when source changes (`npm ci && npm run build`) and commit it. CI fails if `dist/` is stale.
 
 ## Modes
 
@@ -25,18 +37,17 @@ Exactly one mode input must be set.
 - `plugin-federation` (default) — MCP shape + composition limits as errors  
 - `mcp` — true MCP-required shape as errors; many PF limits as warnings  
 
-## Local development
+## Local development (maintainers only)
 
 ```bash
-npm ci
-npm run build
+npm ci          # only for contributors building/testing
+npm run build   # writes dist/index.cjs — commit this file
 npm test
 
-# Mode A smoke
 INPUT_TOOLS_LIST_FILE=fixtures/valid-tools-list.json \
 INPUT_PROFILE=plugin-federation \
 INPUT_GITHUB_ANNOTATIONS=false \
-node dist/index.js
+node dist/index.cjs
 ```
 
 ## Exit codes

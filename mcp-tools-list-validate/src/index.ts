@@ -115,38 +115,39 @@ export async function main(): Promise<number> {
   return result === "pass" ? 0 : 1;
 }
 
-function runCli(): void {
-  main()
-    .then((code) => {
-      process.exitCode = code;
-    })
-    .catch((error: unknown) => {
-      if (error instanceof UsageError) {
-        console.error(`error: ${error.message}`);
-        setOutputs({
-          result: "error",
-          "error-count": "0",
-          "warning-count": "0",
-          "tool-count": "0",
-          "report-file": "",
-          "tools-array-digest": "",
-          "pf-tool-catalog-digest": "",
-          "input-mode": "",
-        });
-        process.exitCode = 2;
-        return;
-      }
-      if (error instanceof InternalError) {
-        console.error(`internal error: ${error.message}`);
-        process.exitCode = 3;
-        return;
-      }
-      console.error(
-        `internal error: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      process.exitCode = 3;
-    });
+function failUsage(error: UsageError): never {
+  console.error(`error: ${error.message}`);
+  setOutputs({
+    result: "error",
+    "error-count": "0",
+    "warning-count": "0",
+    "tool-count": "0",
+    "report-file": "",
+    "tools-array-digest": "",
+    "pf-tool-catalog-digest": "",
+    "input-mode": "",
+  });
+  process.exit(2);
 }
 
-// Bundled CLI entry always runs; unit tests import modules other than this file.
-runCli();
+async function runCli(): Promise<void> {
+  try {
+    const code = await main();
+    process.exit(code);
+  } catch (error: unknown) {
+    if (error instanceof UsageError) {
+      failUsage(error);
+    }
+    if (error instanceof InternalError) {
+      console.error(`internal error: ${error.message}`);
+      process.exit(3);
+    }
+    console.error(
+      `internal error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(3);
+  }
+}
+
+// Bundled Action entry always runs; unit tests import other modules only.
+void runCli();

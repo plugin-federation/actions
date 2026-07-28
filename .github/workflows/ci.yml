@@ -16,17 +16,21 @@ jobs:
         working-directory: mcp-tools-list-validate
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # Maintainer CI only — consumer workflows that *use* this Action never run npm.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "24"
+          node-version: "20"
           cache: npm
           cache-dependency-path: mcp-tools-list-validate/package-lock.json
       - run: npm ci
-      - run: npm run build
       - run: npm test
-      - name: Smoke Mode A fixture
+      - name: Build and verify committed dist is fresh
         run: |
-          node dist/index.js
+          npm run build
+          git diff --exit-code -- dist/index.cjs \
+            || (echo "::error::dist/index.cjs is stale; run npm run build and commit dist/" && exit 1)
+      - name: Smoke Mode A (same entrypoint as the Action)
+        run: node dist/index.cjs
         env:
           INPUT_TOOLS_LIST_FILE: fixtures/valid-tools-list.json
           INPUT_PROFILE: plugin-federation

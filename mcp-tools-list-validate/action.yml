@@ -1,9 +1,14 @@
 name: "MCP tools/list validate"
-description: "Validate MCP tools/list from a file or live MCP server (2025-06-18 + optional Plugin Federation limits)"
+description: "Validate MCP tools/list from a file or live MCP server (2025-06-18 + optional Plugin Federation limits). Zero consumer npm install — runs a pre-bundled dist."
 author: "Plugin Federation"
 branding:
   icon: check-circle
   color: purple
+
+# Hermetic JavaScript Action:
+# - No actions/setup-node
+# - No npm install / npm ci on the consumer job
+# - Runner executes committed dist/index.cjs with Node 20 (bundled Ajv and all deps)
 
 inputs:
   tools-list-file:
@@ -74,59 +79,21 @@ inputs:
 outputs:
   result:
     description: "pass | fail | error"
-    value: ${{ steps.validate.outputs.result }}
   error-count:
     description: "Number of error findings"
-    value: ${{ steps.validate.outputs.error-count }}
   warning-count:
     description: "Number of warning findings"
-    value: ${{ steps.validate.outputs.warning-count }}
   tool-count:
     description: "Normalized tool count"
-    value: ${{ steps.validate.outputs.tool-count }}
   report-file:
     description: "Absolute path to written report"
-    value: ${{ steps.validate.outputs.report-file }}
   tools-array-digest:
     description: "tools-array-v1 digest or empty"
-    value: ${{ steps.validate.outputs.tools-array-digest }}
   pf-tool-catalog-digest:
     description: "pf-tool-catalog-v1 digest or empty"
-    value: ${{ steps.validate.outputs.pf-tool-catalog-digest }}
   input-mode:
     description: "file | live"
-    value: ${{ steps.validate.outputs.input-mode }}
 
 runs:
-  using: composite
-  steps:
-    - name: Setup Node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-      with:
-        node-version: "24"
-    - name: Validate tools/list
-      id: validate
-      shell: bash
-      env:
-        INPUT_TOOLS_LIST_FILE: ${{ inputs.tools-list-file }}
-        INPUT_MCP_CONFIG_FILE: ${{ inputs.mcp-config-file }}
-        INPUT_PROFILE: ${{ inputs.profile }}
-        INPUT_FAIL_ON_WARNINGS: ${{ inputs.fail-on-warnings }}
-        INPUT_FAIL_ON_INCOMPLETE_LIST: ${{ inputs.fail-on-incomplete-list }}
-        INPUT_REPORT_FILE: ${{ inputs.report-file }}
-        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
-        INPUT_GITHUB_ANNOTATIONS: ${{ inputs.github-annotations }}
-        INPUT_MAX_BYTES: ${{ inputs.max-bytes }}
-        INPUT_MAX_TOOLS: ${{ inputs.max-tools }}
-        INPUT_MAX_PAGES: ${{ inputs.max-pages }}
-        INPUT_TIMEOUT_MS: ${{ inputs.timeout-ms }}
-        INPUT_DEADLINE_MS: ${{ inputs.deadline-ms }}
-        INPUT_ALLOW_INSECURE_HTTP: ${{ inputs.allow-insecure-http }}
-        INPUT_ALLOWED_HOSTS: ${{ inputs.allowed-hosts }}
-        INPUT_MCP_SCHEMA_VERSION: ${{ inputs.mcp-schema-version }}
-      run: |
-        if [[ ! -f "${{ github.action_path }}/dist/index.js" ]]; then
-          echo "error: dist/index.js missing at this ref. Pin a release tag that includes dist/ (not @main)." >&2
-          exit 2
-        fi
-        node "${{ github.action_path }}/dist/index.js"
+  using: node20
+  main: dist/index.cjs
