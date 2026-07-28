@@ -2874,20 +2874,20 @@ var require_compile = __commonJS({
     var util_1 = require_util();
     var validate_1 = require_validate();
     var SchemaEnv = class {
-      constructor(env2) {
+      constructor(env) {
         var _a;
         this.refs = {};
         this.dynamicAnchors = {};
         let schema;
-        if (typeof env2.schema == "object")
-          schema = env2.schema;
-        this.schema = env2.schema;
-        this.schemaId = env2.schemaId;
-        this.root = env2.root || this;
-        this.baseId = (_a = env2.baseId) !== null && _a !== void 0 ? _a : (0, resolve_1.normalizeId)(schema === null || schema === void 0 ? void 0 : schema[env2.schemaId || "$id"]);
-        this.schemaPath = env2.schemaPath;
-        this.localRefs = env2.localRefs;
-        this.meta = env2.meta;
+        if (typeof env.schema == "object")
+          schema = env.schema;
+        this.schema = env.schema;
+        this.schemaId = env.schemaId;
+        this.root = env.root || this;
+        this.baseId = (_a = env.baseId) !== null && _a !== void 0 ? _a : (0, resolve_1.normalizeId)(schema === null || schema === void 0 ? void 0 : schema[env.schemaId || "$id"]);
+        this.schemaPath = env.schemaPath;
+        this.localRefs = env.localRefs;
+        this.meta = env.meta;
         this.$async = schema === null || schema === void 0 ? void 0 : schema.$async;
         this.refs = {};
       }
@@ -3071,15 +3071,15 @@ var require_compile = __commonJS({
           baseId = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, schId);
         }
       }
-      let env2;
+      let env;
       if (typeof schema != "boolean" && schema.$ref && !(0, util_1.schemaHasRulesButRef)(schema, this.RULES)) {
         const $ref = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, schema.$ref);
-        env2 = resolveSchema.call(this, root, $ref);
+        env = resolveSchema.call(this, root, $ref);
       }
       const { schemaId } = this.opts;
-      env2 = env2 || new SchemaEnv({ schema, schemaId, root, baseId });
-      if (env2.schema !== env2.root.schema)
-        return env2;
+      env = env || new SchemaEnv({ schema, schemaId, root, baseId });
+      if (env.schema !== env.root.schema)
+        return env;
       return void 0;
     }
   }
@@ -3113,27 +3113,27 @@ var require_utils = __commonJS({
     var isHexPair = RegExp.prototype.test.bind(/^[\da-f]{2}$/iu);
     var isUnreserved = RegExp.prototype.test.bind(/^[\da-z\-._~]$/iu);
     var isPathCharacter = RegExp.prototype.test.bind(/^[\da-z\-._~!$&'()*+,;=:@/]$/iu);
-    function stringArrayToHexStripped(input) {
+    function stringArrayToHexStripped(input2) {
       let acc = "";
       let code = 0;
       let i = 0;
-      for (i = 0; i < input.length; i++) {
-        code = input[i].charCodeAt(0);
+      for (i = 0; i < input2.length; i++) {
+        code = input2[i].charCodeAt(0);
         if (code === 48) {
           continue;
         }
         if (!(code >= 48 && code <= 57 || code >= 65 && code <= 70 || code >= 97 && code <= 102)) {
           return "";
         }
-        acc += input[i];
+        acc += input2[i];
         break;
       }
-      for (i += 1; i < input.length; i++) {
-        code = input[i].charCodeAt(0);
+      for (i += 1; i < input2.length; i++) {
+        code = input2[i].charCodeAt(0);
         if (!(code >= 48 && code <= 57 || code >= 65 && code <= 70 || code >= 97 && code <= 102)) {
           return "";
         }
-        acc += input[i];
+        acc += input2[i];
       }
       return acc;
     }
@@ -3155,7 +3155,7 @@ var require_utils = __commonJS({
       }
       return true;
     }
-    function getIPV6(input) {
+    function getIPV6(input2) {
       let tokenCount = 0;
       const output = { error: false, address: "", zone: "" };
       const address = [];
@@ -3163,8 +3163,8 @@ var require_utils = __commonJS({
       let endipv6Encountered = false;
       let endIpv6 = false;
       let consume = consumeHextets;
-      for (let i = 0; i < input.length; i++) {
-        const cursor = input[i];
+      for (let i = 0; i < input2.length; i++) {
+        const cursor = input2[i];
         if (cursor === "[" || cursor === "]") {
           continue;
         }
@@ -3179,7 +3179,7 @@ var require_utils = __commonJS({
             output.error = true;
             break;
           }
-          if (i > 0 && input[i - 1] === ":") {
+          if (i > 0 && input2[i - 1] === ":") {
             endipv6Encountered = true;
           }
           address.push(":");
@@ -3231,37 +3231,37 @@ var require_utils = __commonJS({
       return ind;
     }
     function removeDotSegments(path3) {
-      let input = path3;
+      let input2 = path3;
       const output = [];
       let nextSlash = -1;
       let len = 0;
-      while (len = input.length) {
+      while (len = input2.length) {
         if (len === 1) {
-          if (input === ".") {
+          if (input2 === ".") {
             break;
-          } else if (input === "/") {
+          } else if (input2 === "/") {
             output.push("/");
             break;
           } else {
-            output.push(input);
+            output.push(input2);
             break;
           }
         } else if (len === 2) {
-          if (input[0] === ".") {
-            if (input[1] === ".") {
+          if (input2[0] === ".") {
+            if (input2[1] === ".") {
               break;
-            } else if (input[1] === "/") {
-              input = input.slice(2);
+            } else if (input2[1] === "/") {
+              input2 = input2.slice(2);
               continue;
             }
-          } else if (input[0] === "/") {
-            if (input[1] === "." || input[1] === "/") {
+          } else if (input2[0] === "/") {
+            if (input2[1] === "." || input2[1] === "/") {
               output.push("/");
               break;
             }
           }
         } else if (len === 3) {
-          if (input === "/..") {
+          if (input2 === "/..") {
             if (output.length !== 0) {
               output.pop();
             }
@@ -3269,24 +3269,24 @@ var require_utils = __commonJS({
             break;
           }
         }
-        if (input[0] === ".") {
-          if (input[1] === ".") {
-            if (input[2] === "/") {
-              input = input.slice(3);
+        if (input2[0] === ".") {
+          if (input2[1] === ".") {
+            if (input2[2] === "/") {
+              input2 = input2.slice(3);
               continue;
             }
-          } else if (input[1] === "/") {
-            input = input.slice(2);
+          } else if (input2[1] === "/") {
+            input2 = input2.slice(2);
             continue;
           }
-        } else if (input[0] === "/") {
-          if (input[1] === ".") {
-            if (input[2] === "/") {
-              input = input.slice(2);
+        } else if (input2[0] === "/") {
+          if (input2[1] === ".") {
+            if (input2[2] === "/") {
+              input2 = input2.slice(2);
               continue;
-            } else if (input[2] === ".") {
-              if (input[3] === "/") {
-                input = input.slice(3);
+            } else if (input2[2] === ".") {
+              if (input2[3] === "/") {
+                input2 = input2.slice(3);
                 if (output.length !== 0) {
                   output.pop();
                 }
@@ -3295,12 +3295,12 @@ var require_utils = __commonJS({
             }
           }
         }
-        if ((nextSlash = input.indexOf("/", 1)) === -1) {
-          output.push(input);
+        if ((nextSlash = input2.indexOf("/", 1)) === -1) {
+          output.push(input2);
           break;
         } else {
-          output.push(input.slice(0, nextSlash));
-          input = input.slice(nextSlash);
+          output.push(input2.slice(0, nextSlash));
+          input2 = input2.slice(nextSlash);
         }
       }
       return output.join("");
@@ -3313,14 +3313,14 @@ var require_utils = __commonJS({
       re.lastIndex = 0;
       return host.replace(re, (ch) => HOST_DELIMS[ch]);
     }
-    function normalizePercentEncoding(input, decodeUnreserved = false) {
-      if (input.indexOf("%") === -1) {
-        return input;
+    function normalizePercentEncoding(input2, decodeUnreserved = false) {
+      if (input2.indexOf("%") === -1) {
+        return input2;
       }
       let output = "";
-      for (let i = 0; i < input.length; i++) {
-        if (input[i] === "%" && i + 2 < input.length) {
-          const hex = input.slice(i + 1, i + 3);
+      for (let i = 0; i < input2.length; i++) {
+        if (input2[i] === "%" && i + 2 < input2.length) {
+          const hex = input2.slice(i + 1, i + 3);
           if (isHexPair(hex)) {
             const normalizedHex = hex.toUpperCase();
             const decoded = String.fromCharCode(parseInt(normalizedHex, 16));
@@ -3333,15 +3333,15 @@ var require_utils = __commonJS({
             continue;
           }
         }
-        output += input[i];
+        output += input2[i];
       }
       return output;
     }
-    function normalizePathEncoding(input) {
+    function normalizePathEncoding(input2) {
       let output = "";
-      for (let i = 0; i < input.length; i++) {
-        if (input[i] === "%" && i + 2 < input.length) {
-          const hex = input.slice(i + 1, i + 3);
+      for (let i = 0; i < input2.length; i++) {
+        if (input2[i] === "%" && i + 2 < input2.length) {
+          const hex = input2.slice(i + 1, i + 3);
           if (isHexPair(hex)) {
             const normalizedHex = hex.toUpperCase();
             const decoded = String.fromCharCode(parseInt(normalizedHex, 16));
@@ -3354,26 +3354,26 @@ var require_utils = __commonJS({
             continue;
           }
         }
-        if (isPathCharacter(input[i])) {
-          output += input[i];
+        if (isPathCharacter(input2[i])) {
+          output += input2[i];
         } else {
-          output += escape(input[i]);
+          output += escape(input2[i]);
         }
       }
       return output;
     }
-    function escapePreservingEscapes(input) {
+    function escapePreservingEscapes(input2) {
       let output = "";
-      for (let i = 0; i < input.length; i++) {
-        if (input[i] === "%" && i + 2 < input.length) {
-          const hex = input.slice(i + 1, i + 3);
+      for (let i = 0; i < input2.length; i++) {
+        if (input2[i] === "%" && i + 2 < input2.length) {
+          const hex = input2.slice(i + 1, i + 3);
           if (isHexPair(hex)) {
             output += "%" + hex.toUpperCase();
             i += 2;
             continue;
           }
         }
-        output += escape(input[i]);
+        output += escape(input2[i]);
       }
       return output;
     }
@@ -4573,8 +4573,8 @@ var require_ref = __commonJS({
       schemaType: "string",
       code(cxt) {
         const { gen, schema: $ref, it } = cxt;
-        const { baseId, schemaEnv: env2, validateName, opts, self } = it;
-        const { root } = env2;
+        const { baseId, schemaEnv: env, validateName, opts, self } = it;
+        const { root } = env;
         if (($ref === "#" || $ref === "#/") && baseId === root.baseId)
           return callRootRef();
         const schOrEnv = compile_1.resolveRef.call(self, root, baseId, $ref);
@@ -4584,8 +4584,8 @@ var require_ref = __commonJS({
           return callValidate(schOrEnv);
         return inlineRefSchema(schOrEnv);
         function callRootRef() {
-          if (env2 === root)
-            return callRef(cxt, validateName, env2, env2.$async);
+          if (env === root)
+            return callRef(cxt, validateName, env, env.$async);
           const rootName = gen.scopeValue("root", { ref: root });
           return callRef(cxt, (0, codegen_1._)`${rootName}.validate`, root, root.$async);
         }
@@ -4615,14 +4615,14 @@ var require_ref = __commonJS({
     exports2.getValidate = getValidate;
     function callRef(cxt, v, sch, $async) {
       const { gen, it } = cxt;
-      const { allErrors, schemaEnv: env2, opts } = it;
+      const { allErrors, schemaEnv: env, opts } = it;
       const passCxt = opts.passContext ? names_1.default.this : codegen_1.nil;
       if ($async)
         callAsyncRef();
       else
         callSyncRef();
       function callAsyncRef() {
-        if (!env2.$async)
+        if (!env.$async)
           throw new Error("async schema referenced by sync schema");
         const valid = gen.let("valid");
         gen.try(() => {
@@ -7745,8 +7745,20 @@ var InternalError = class extends Error {
 };
 
 // src/config.ts
-function env(name) {
-  return (process.env[name] ?? "").trim();
+function input(name) {
+  const upper = name.toUpperCase();
+  const underscored = name.replace(/[ -]/g, "_").toUpperCase();
+  const candidates = [
+    `INPUT_${underscored}`,
+    `INPUT_${upper}`,
+    `INPUT_${name.replace(/ /g, "_").toUpperCase()}`
+  ];
+  for (const key of candidates) {
+    if (Object.prototype.hasOwnProperty.call(process.env, key)) {
+      return (process.env[key] ?? "").trim();
+    }
+  }
+  return (process.env[candidates[0]] ?? "").trim();
 }
 function parseBool(raw, defaultValue) {
   if (raw === "") return defaultValue;
@@ -7771,37 +7783,37 @@ function parseProfile(raw) {
   return v;
 }
 function loadConfig() {
-  const toolsListFile = env("INPUT_TOOLS_LIST_FILE");
-  const mcpConfigFile = env("INPUT_MCP_CONFIG_FILE");
+  const toolsListFile = input("tools-list-file");
+  const mcpConfigFile = input("mcp-config-file");
   if (toolsListFile && mcpConfigFile) {
     throw new UsageError(
-      "usage: specify exactly one of tools-list-file or mcp-config-file"
+      "usage: specify exactly one of tools-list-file or mcp-config-file (both were set)"
     );
   }
   if (!toolsListFile && !mcpConfigFile) {
     throw new UsageError(
-      "usage: specify exactly one of tools-list-file or mcp-config-file"
+      "usage: specify exactly one of tools-list-file or mcp-config-file (neither was set)"
     );
   }
-  const maxToolsRaw = env("INPUT_MAX_TOOLS");
-  const allowedHostsRaw = env("INPUT_ALLOWED_HOSTS");
+  const maxToolsRaw = input("max-tools");
+  const allowedHostsRaw = input("allowed-hosts");
   return {
     toolsListFile,
     mcpConfigFile,
-    profile: parseProfile(env("INPUT_PROFILE")),
-    failOnWarnings: parseBool(env("INPUT_FAIL_ON_WARNINGS"), false),
-    failOnIncompleteList: parseBool(env("INPUT_FAIL_ON_INCOMPLETE_LIST"), false),
-    reportFile: env("INPUT_REPORT_FILE") || "mcp-tools-list-report.json",
-    sarifFile: env("INPUT_SARIF_FILE"),
-    githubAnnotations: parseBool(env("INPUT_GITHUB_ANNOTATIONS"), true),
-    maxBytes: parseIntEnv(env("INPUT_MAX_BYTES"), 20 * 1024 * 1024, "max-bytes"),
+    profile: parseProfile(input("profile")),
+    failOnWarnings: parseBool(input("fail-on-warnings"), false),
+    failOnIncompleteList: parseBool(input("fail-on-incomplete-list"), false),
+    reportFile: input("report-file") || "mcp-tools-list-report.json",
+    sarifFile: input("sarif-file"),
+    githubAnnotations: parseBool(input("github-annotations"), true),
+    maxBytes: parseIntEnv(input("max-bytes"), 20 * 1024 * 1024, "max-bytes"),
     maxTools: maxToolsRaw === "" ? 5e3 : parseIntEnv(maxToolsRaw, 5e3, "max-tools"),
-    maxPages: parseIntEnv(env("INPUT_MAX_PAGES"), 50, "max-pages"),
-    timeoutMs: parseIntEnv(env("INPUT_TIMEOUT_MS"), 3e4, "timeout-ms"),
-    deadlineMs: parseIntEnv(env("INPUT_DEADLINE_MS"), 12e4, "deadline-ms"),
-    allowInsecureHttp: parseBool(env("INPUT_ALLOW_INSECURE_HTTP"), false),
+    maxPages: parseIntEnv(input("max-pages"), 50, "max-pages"),
+    timeoutMs: parseIntEnv(input("timeout-ms"), 3e4, "timeout-ms"),
+    deadlineMs: parseIntEnv(input("deadline-ms"), 12e4, "deadline-ms"),
+    allowInsecureHttp: parseBool(input("allow-insecure-http"), false),
     allowedHosts: allowedHostsRaw ? allowedHostsRaw.split(",").map((h) => h.trim()).filter(Boolean) : [],
-    mcpSchemaVersion: env("INPUT_MCP_SCHEMA_VERSION") || "2025-06-18"
+    mcpSchemaVersion: input("mcp-schema-version") || "2025-06-18"
   };
 }
 
