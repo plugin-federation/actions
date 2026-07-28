@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { loadConfig } from "./config.ts";
 import { computeDigests } from "./digest.ts";
 import { setOutputs } from "./github.ts";
@@ -68,7 +69,8 @@ export async function main(): Promise<number> {
     byteLength = bytes.length;
     const raw = parseJsonBytes(bytes);
     const server = parseMcpServersDocument(raw, config.mcpServer);
-    const live = await listToolsLive(server, config);
+    // stdio command/args are relative to the config file directory by default
+    const live = await listToolsLive(server, config, path.dirname(resolved));
     mcpHost = live.mcpHost;
     catalog = normalizeToolsPayload({
       tools: live.tools,

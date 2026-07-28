@@ -14,6 +14,8 @@ export interface LiveListResult {
 export async function listToolsLive(
   server: McpServerEntry,
   config: ActionConfig,
+  /** Default cwd for stdio when entry.cwd is unset (typically the config file directory). */
+  defaultCwd?: string,
 ): Promise<LiveListResult> {
   const options = {
     timeoutMs: config.timeoutMs,
@@ -24,11 +26,15 @@ export async function listToolsLive(
   };
 
   if (server.transport === "stdio") {
-    const result = await listToolsStdio(server, options);
+    const withCwd: typeof server = {
+      ...server,
+      cwd: server.cwd ?? defaultCwd,
+    };
+    const result = await listToolsStdio(withCwd, options);
     return {
       tools: result.tools,
       nextCursor: result.nextCursor,
-      serverName: server.name,
+      serverName: withCwd.name,
       transport: "stdio",
     };
   }

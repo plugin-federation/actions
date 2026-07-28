@@ -3230,8 +3230,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path3) {
-      let input2 = path3;
+    function removeDotSegments(path4) {
+      let input2 = path4;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3483,8 +3483,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path3, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path3 && path3 !== "/" ? path3 : void 0;
+        const [path4, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path4 && path4 !== "/" ? path4 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -7727,6 +7727,7 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 var import_node_crypto2 = require("node:crypto");
+var import_node_path3 = __toESM(require("node:path"), 1);
 
 // src/types.ts
 var UsageError = class extends Error {
@@ -8457,7 +8458,7 @@ ${body}`;
 }
 
 // src/mcp/list-tools.ts
-async function listToolsLive(server, config) {
+async function listToolsLive(server, config, defaultCwd) {
   const options = {
     timeoutMs: config.timeoutMs,
     deadlineMs: config.deadlineMs,
@@ -8466,11 +8467,15 @@ async function listToolsLive(server, config) {
     protocolVersion: config.mcpSchemaVersion
   };
   if (server.transport === "stdio") {
-    const result2 = await listToolsStdio(server, options);
+    const withCwd = {
+      ...server,
+      cwd: server.cwd ?? defaultCwd
+    };
+    const result2 = await listToolsStdio(withCwd, options);
     return {
       tools: result2.tools,
       nextCursor: result2.nextCursor,
-      serverName: server.name,
+      serverName: withCwd.name,
       transport: "stdio"
     };
   }
@@ -8703,7 +8708,7 @@ function validateToolSchemas(tools, profile) {
     if (!isObject4(tool)) return;
     const toolName = typeof tool.name === "string" ? tool.name : void 0;
     if (isObject4(tool.inputSchema)) {
-      const path3 = `$.tools[${index}].inputSchema`;
+      const path4 = `$.tools[${index}].inputSchema`;
       if (countNodes(tool.inputSchema) > MAX_NODES) {
         findings.push(
           makeFinding(
@@ -8712,7 +8717,7 @@ function validateToolSchemas(tools, profile) {
             `schema validation budget exceeded (>${MAX_NODES} nodes)`,
             toolName,
             index,
-            path3
+            path4
           )
         );
       } else if (hasExternalRef(tool.inputSchema)) {
@@ -8723,7 +8728,7 @@ function validateToolSchemas(tools, profile) {
             "inputSchema has external or file $ref; inline all $refs for offline validation",
             toolName,
             index,
-            path3
+            path4
           )
         );
       } else {
@@ -8737,7 +8742,7 @@ function validateToolSchemas(tools, profile) {
               "schema validation budget exceeded (compile >100ms)",
               toolName,
               index,
-              path3
+              path4
             )
           );
         } else if (!result.ok) {
@@ -8748,14 +8753,14 @@ function validateToolSchemas(tools, profile) {
               `inputSchema failed Ajv meta-validation: ${result.message}`,
               toolName,
               index,
-              path3
+              path4
             )
           );
         }
       }
     }
     if (isObject4(tool.outputSchema)) {
-      const path3 = `$.tools[${index}].outputSchema`;
+      const path4 = `$.tools[${index}].outputSchema`;
       if (countNodes(tool.outputSchema) > MAX_NODES) {
         findings.push(
           makeFinding(
@@ -8764,7 +8769,7 @@ function validateToolSchemas(tools, profile) {
             `schema validation budget exceeded (>${MAX_NODES} nodes)`,
             toolName,
             index,
-            path3
+            path4
           )
         );
       } else if (hasExternalRef(tool.outputSchema)) {
@@ -8775,7 +8780,7 @@ function validateToolSchemas(tools, profile) {
             "outputSchema has external or file $ref; inline all $refs for offline validation",
             toolName,
             index,
-            path3
+            path4
           )
         );
       } else {
@@ -8788,7 +8793,7 @@ function validateToolSchemas(tools, profile) {
               `outputSchema failed Ajv meta-validation: ${result.message}`,
               toolName,
               index,
-              path3
+              path4
             )
           );
         }
@@ -9312,7 +9317,7 @@ async function main() {
     byteLength = bytes.length;
     const raw = parseJsonBytes(bytes);
     const server = parseMcpServersDocument(raw, config.mcpServer);
-    const live = await listToolsLive(server, config);
+    const live = await listToolsLive(server, config, import_node_path3.default.dirname(resolved));
     mcpHost = live.mcpHost;
     catalog = normalizeToolsPayload({
       tools: live.tools,
