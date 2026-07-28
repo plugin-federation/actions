@@ -8300,7 +8300,8 @@ var ANN_KEYS = /* @__PURE__ */ new Set([
   "openWorldHint"
 ]);
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-var PF_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+var MCP_TOOL_NAME_MAX = 64;
+var MCP_TOOL_NAME_RE = /^[A-Za-z0-9_./-]{1,64}$/;
 var SECRET_HINT = /\b(password|secret|api[_-]?key|private[_-]?key|authorization|bearer\s+[a-z0-9._~+/=-]+)\b/i;
 function sev(profile, mcp, pf) {
   return profile === "mcp" ? mcp : pf;
@@ -8415,50 +8416,46 @@ function runRules(catalog, ctx) {
       nameOk = true;
       nameValue = tool.name;
       if (nameValue === "") {
-        const s = sev(profile, "warning", "error");
-        if (s !== "skip") {
-          findings.push(
-            finding("PFMTL-TOOL-014", s, "Tool name must not be empty", {
+        findings.push(
+          finding(
+            "PFMTL-TOOL-014",
+            "error",
+            "Tool name must not be empty (MCP tool names are 1\u201364 characters)",
+            {
               toolName: nameValue,
               toolIndex: index,
               jsonPath: `${basePath}.name`
-            })
-          );
-        }
+            }
+          )
+        );
       } else {
-        {
-          const s = sev(profile, "warning", "error");
-          if (s !== "skip" && !PF_NAME_RE.test(nameValue)) {
-            findings.push(
-              finding(
-                "PFMTL-TOOL-003",
-                s,
-                `Tool name "${nameValue}" does not match Plugin Federation toolName pattern`,
-                {
-                  toolName: nameValue,
-                  toolIndex: index,
-                  jsonPath: `${basePath}.name`
-                }
-              )
-            );
-          }
-        }
-        {
-          const s = sev(profile, "warning", "error");
-          if (s !== "skip" && scalarCount(nameValue) > 255) {
-            findings.push(
-              finding(
-                "PFMTL-TOOL-004",
-                s,
-                `Tool name exceeds 255 characters (${scalarCount(nameValue)})`,
-                {
-                  toolName: nameValue,
-                  toolIndex: index,
-                  jsonPath: `${basePath}.name`
-                }
-              )
-            );
-          }
+        const nameLen = scalarCount(nameValue);
+        if (nameLen > MCP_TOOL_NAME_MAX) {
+          findings.push(
+            finding(
+              "PFMTL-TOOL-004",
+              "error",
+              `Tool name exceeds ${MCP_TOOL_NAME_MAX} characters (${nameLen}); MCP tool names MUST be 1\u2013${MCP_TOOL_NAME_MAX}`,
+              {
+                toolName: nameValue,
+                toolIndex: index,
+                jsonPath: `${basePath}.name`
+              }
+            )
+          );
+        } else if (!MCP_TOOL_NAME_RE.test(nameValue)) {
+          findings.push(
+            finding(
+              "PFMTL-TOOL-003",
+              "error",
+              `Tool name "${nameValue}" is not a valid MCP tool name (allowed: A\u2013Z a\u2013z 0\u20139 _ - . /; length 1\u2013${MCP_TOOL_NAME_MAX}; SEP-986)`,
+              {
+                toolName: nameValue,
+                toolIndex: index,
+                jsonPath: `${basePath}.name`
+              }
+            )
+          );
         }
         if (names.has(nameValue)) {
           findings.push(

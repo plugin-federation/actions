@@ -46,7 +46,7 @@ describe("runRules", () => {
     assert.ok(findings.some((f) => f.ruleId === "PFMTL-TOOL-003"));
   });
 
-  it("warns empty name under mcp profile", () => {
+  it("errors on empty name under mcp profile (min length 1)", () => {
     const catalog = normalizeToolsPayload({
       tools: [{ name: "", inputSchema: { type: "object" } }],
     });
@@ -57,24 +57,45 @@ describe("runRules", () => {
     });
     const empty = findings.find((f) => f.ruleId === "PFMTL-TOOL-014");
     assert.ok(empty);
-    assert.equal(empty.severity, "warning");
+    assert.equal(empty.severity, "error");
   });
 
-  it("rejects gateway qualified names under plugin-federation", () => {
+  it("allows slash namespacing (SEP-986) and rejects colon", () => {
+    const ok = normalizeToolsPayload({
+      tools: [{ name: "source/get_weather", inputSchema: { type: "object" } }],
+    });
+    assert.equal(
+      runRules(ok, {
+        profile: "plugin-federation",
+        maxTools: 5000,
+        failOnIncompleteList: false,
+      }).filter((f) => f.severity === "error").length,
+      0,
+    );
+
+    const bad = normalizeToolsPayload({
+      tools: [{ name: "create.item:v1", inputSchema: { type: "object" } }],
+    });
+    assert.ok(
+      runRules(bad, {
+        profile: "plugin-federation",
+        maxTools: 5000,
+        failOnIncompleteList: false,
+      }).some((f) => f.ruleId === "PFMTL-TOOL-003"),
+    );
+  });
+
+  it("rejects names longer than 64 characters", () => {
+    const name = "a".repeat(65);
     const catalog = normalizeToolsPayload({
-      tools: [
-        {
-          name: "source/get_weather",
-          inputSchema: { type: "object" },
-        },
-      ],
+      tools: [{ name, inputSchema: { type: "object" } }],
     });
     const findings = runRules(catalog, {
-      profile: "plugin-federation",
+      profile: "mcp",
       maxTools: 5000,
       failOnIncompleteList: false,
     });
-    assert.ok(findings.some((f) => f.ruleId === "PFMTL-TOOL-003"));
+    assert.ok(findings.some((f) => f.ruleId === "PFMTL-TOOL-004"));
   });
 
   it("rejects invalid envelope sourceId", () => {
