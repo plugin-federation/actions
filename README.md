@@ -17,7 +17,7 @@ uses: plugin-federation/actions/mcp-tools-list-validate@v1
 Deterministic validation of an MCP tool catalog:
 
 - **Mode A:** offline JSON file (`tools-list-file`)
-- **Mode B:** live MCP Streamable HTTP `tools/list` (`mcp-config-file`) — planned
+- **Mode B:** live `tools/list` via `mcpServers` config (`mcp-config-file`) — stdio or HTTP
 
 Profiles: `mcp` (protocol shape) and `plugin-federation` (composition limits).
 

@@ -71,6 +71,7 @@ export function loadConfig(): ActionConfig {
   return {
     toolsListFile,
     mcpConfigFile,
+    mcpServer: input("mcp-server"),
     profile: parseProfile(input("profile")),
     failOnWarnings: parseBool(input("fail-on-warnings"), false),
     failOnIncompleteList: parseBool(input("fail-on-incomplete-list"), false),

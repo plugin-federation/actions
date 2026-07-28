@@ -3230,8 +3230,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path3) {
-      let input2 = path3;
+    function removeDotSegments(path4) {
+      let input2 = path4;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3483,8 +3483,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path3, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path3 && path3 !== "/" ? path3 : void 0;
+        const [path4, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path4 && path4 !== "/" ? path4 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -7727,6 +7727,7 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 var import_node_crypto2 = require("node:crypto");
+var import_node_path3 = __toESM(require("node:path"), 1);
 
 // src/types.ts
 var UsageError = class extends Error {
@@ -7800,6 +7801,7 @@ function loadConfig() {
   return {
     toolsListFile,
     mcpConfigFile,
+    mcpServer: input("mcp-server"),
     profile: parseProfile(input("profile")),
     failOnWarnings: parseBool(input("fail-on-warnings"), false),
     failOnIncompleteList: parseBool(input("fail-on-incomplete-list"), false),
@@ -7947,8 +7949,552 @@ function setOutputs(map) {
   }
 }
 
-// src/parse.ts
+// src/mcp/env.ts
+var ENV_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
+function expandEnvString(value, env = process.env, context = "config") {
+  return value.replace(ENV_PATTERN, (match, braced, bare) => {
+    const name = braced ?? bare;
+    if (!name) return match;
+    const resolved = env[name];
+    if (resolved === void 0) {
+      throw new UsageError(
+        `${context}: environment variable ${name} is not set (referenced as ${match})`
+      );
+    }
+    return resolved;
+  });
+}
+function expandEnvRecord(record, env = process.env, context = "config") {
+  if (!record) return {};
+  const out = {};
+  for (const [key, value] of Object.entries(record)) {
+    out[key] = expandEnvString(value, env, `${context}.${key}`);
+  }
+  return out;
+}
+function expandEnvStringArray(values, env = process.env, context = "config") {
+  if (!values) return [];
+  return values.map((v, i) => expandEnvString(v, env, `${context}[${i}]`));
+}
+
+// src/mcp/config.ts
 function isObject2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function asStringMap(value, context) {
+  if (value === void 0) return {};
+  if (!isObject2(value)) {
+    throw new UsageError(`${context} must be an object of string values`);
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v !== "string") {
+      throw new UsageError(`${context}.${k} must be a string`);
+    }
+    out[k] = v;
+  }
+  return out;
+}
+function asStringArray(value, context) {
+  if (value === void 0) return [];
+  if (!Array.isArray(value) || !value.every((x) => typeof x === "string")) {
+    throw new UsageError(`${context} must be an array of strings`);
+  }
+  return value;
+}
+function parseMcpServersDocument(raw, selectedServer) {
+  let servers;
+  if (!isObject2(raw)) {
+    throw new UsageError("mcp config root must be a JSON object");
+  }
+  if (isObject2(raw.mcpServers)) {
+    servers = raw.mcpServers;
+  } else if (typeof raw.command === "string" || typeof raw.url === "string") {
+    servers = { default: raw };
+  } else {
+    servers = raw;
+  }
+  const names = Object.keys(servers);
+  if (names.length === 0) {
+    throw new UsageError("mcp config has no servers");
+  }
+  let name = selectedServer;
+  if (!name) {
+    if (names.length !== 1) {
+      throw new UsageError(
+        `mcp config has multiple servers (${names.join(", ")}); set mcp-server input to select one`
+      );
+    }
+    name = names[0];
+  } else if (!(name in servers)) {
+    throw new UsageError(
+      `mcp-server "${name}" not found; available: ${names.join(", ")}`
+    );
+  }
+  const entry = servers[name];
+  if (!isObject2(entry)) {
+    throw new UsageError(`mcpServers.${name} must be an object`);
+  }
+  const hasCommand = typeof entry.command === "string";
+  const hasUrl = typeof entry.url === "string";
+  if (hasCommand === hasUrl) {
+    throw new UsageError(
+      `mcpServers.${name} must define exactly one of "command" (stdio) or "url" (http)`
+    );
+  }
+  if (hasCommand) {
+    const command = expandEnvString(
+      entry.command,
+      process.env,
+      `mcpServers.${name}.command`
+    );
+    const args = expandEnvStringArray(
+      asStringArray(entry.args, `mcpServers.${name}.args`),
+      process.env,
+      `mcpServers.${name}.args`
+    );
+    const env = expandEnvRecord(
+      asStringMap(entry.env, `mcpServers.${name}.env`),
+      process.env,
+      `mcpServers.${name}.env`
+    );
+    let cwd;
+    if (entry.cwd !== void 0) {
+      if (typeof entry.cwd !== "string") {
+        throw new UsageError(`mcpServers.${name}.cwd must be a string`);
+      }
+      cwd = expandEnvString(entry.cwd, process.env, `mcpServers.${name}.cwd`);
+    }
+    return {
+      name,
+      transport: "stdio",
+      command,
+      args,
+      env,
+      cwd
+    };
+  }
+  const url = expandEnvString(
+    entry.url,
+    process.env,
+    `mcpServers.${name}.url`
+  );
+  let headersRaw = entry.headers;
+  if (headersRaw === void 0 && isObject2(entry.requestInit) && entry.requestInit.headers !== void 0) {
+    headersRaw = entry.requestInit.headers;
+  }
+  const headers = expandEnvRecord(
+    asStringMap(headersRaw, `mcpServers.${name}.headers`),
+    process.env,
+    `mcpServers.${name}.headers`
+  );
+  return {
+    name,
+    transport: "http",
+    url,
+    headers
+  };
+}
+
+// src/mcp/http-client.ts
+async function listToolsHttp(server, options) {
+  if (!server.url) {
+    throw new UsageError("http server missing url");
+  }
+  let parsed;
+  try {
+    parsed = new URL(server.url);
+  } catch {
+    throw new UsageError(`mcp http (${server.name}): invalid url`);
+  }
+  if (parsed.protocol === "http:") {
+    if (!options.allowInsecureHttp) {
+      throw new UsageError(
+        `mcp http (${server.name}): http:// URLs require allow-insecure-http: true`
+      );
+    }
+  } else if (parsed.protocol !== "https:") {
+    throw new UsageError(
+      `mcp http (${server.name}): only http(s) URLs are supported`
+    );
+  }
+  if (options.allowedHosts.length > 0 && !options.allowedHosts.includes(parsed.hostname)) {
+    throw new UsageError(
+      `mcp http (${server.name}): host ${parsed.hostname} not in allowed-hosts`
+    );
+  }
+  const started = Date.now();
+  const deadline = started + options.deadlineMs;
+  let sessionId;
+  let id = 1;
+  async function rpc(method, params, notification = false) {
+    if (Date.now() > deadline) {
+      throw new UsageError(
+        `mcp http (${server.name}): overall deadline exceeded`
+      );
+    }
+    const remaining = Math.max(1, Math.min(options.timeoutMs, deadline - Date.now()));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), remaining);
+    const body = notification ? JSON.stringify({ jsonrpc: "2.0", method, params }) : JSON.stringify({ jsonrpc: "2.0", id: id++, method, params });
+    const headers = {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "mcp-protocol-version": options.protocolVersion,
+      ...server.headers
+    };
+    if (sessionId) {
+      headers["mcp-session-id"] = sessionId;
+    }
+    try {
+      const response = await fetch(server.url, {
+        method: "POST",
+        headers,
+        body,
+        signal: controller.signal,
+        redirect: "error"
+      });
+      const sid = response.headers.get("mcp-session-id");
+      if (sid) sessionId = sid;
+      if (!response.ok) {
+        throw new UsageError(
+          `mcp http (${server.name}): HTTP ${response.status} for ${method}`
+        );
+      }
+      if (notification) {
+        return void 0;
+      }
+      const contentType = response.headers.get("content-type") ?? "";
+      const text = await response.text();
+      const message = parseRpcResponse(text, contentType, server.name);
+      if (message.error) {
+        throw new UsageError(
+          `mcp http (${server.name}): ${method} error: ${message.error.message}`
+        );
+      }
+      return message.result;
+    } catch (error) {
+      if (error instanceof UsageError) throw error;
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new UsageError(
+          `mcp http (${server.name}): timeout waiting for ${method}`
+        );
+      }
+      throw new UsageError(
+        `mcp http (${server.name}): ${method} failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  await rpc("initialize", {
+    protocolVersion: options.protocolVersion,
+    capabilities: {},
+    clientInfo: {
+      name: "mcp-tools-list-validate",
+      version: "0.1.0"
+    }
+  });
+  await rpc("notifications/initialized", {}, true);
+  const tools = [];
+  let cursor;
+  let residualCursor;
+  let pages = 0;
+  for (; ; ) {
+    pages += 1;
+    if (pages > options.maxPages) {
+      residualCursor = cursor;
+      break;
+    }
+    const result = await rpc(
+      "tools/list",
+      cursor ? { cursor } : {}
+    );
+    if (!result || !Array.isArray(result.tools)) {
+      throw new UsageError(
+        `mcp http (${server.name}): tools/list result missing tools array`
+      );
+    }
+    tools.push(...result.tools);
+    if (!result.nextCursor) {
+      residualCursor = void 0;
+      break;
+    }
+    cursor = result.nextCursor;
+  }
+  return { tools, nextCursor: residualCursor, host: parsed.hostname };
+}
+function parseRpcResponse(text, contentType, serverName) {
+  if (contentType.includes("text/event-stream")) {
+    const dataLines = [];
+    for (const line of text.split(/\r?\n/)) {
+      if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).trim());
+      }
+    }
+    const payloads = dataLines.filter(Boolean);
+    for (let i = payloads.length - 1; i >= 0; i--) {
+      try {
+        const msg = JSON.parse(payloads[i]);
+        if (msg.id !== void 0 || msg.result !== void 0 || msg.error) {
+          return msg;
+        }
+      } catch {
+      }
+    }
+    throw new UsageError(
+      `mcp http (${serverName}): could not parse SSE tools/list response`
+    );
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new UsageError(
+      `mcp http (${serverName}): invalid JSON response body`
+    );
+  }
+}
+
+// src/mcp/stdio-client.ts
+var import_node_child_process = require("node:child_process");
+async function listToolsStdio(server, options) {
+  if (!server.command) {
+    throw new UsageError("stdio server missing command");
+  }
+  const started = Date.now();
+  const deadline = started + options.deadlineMs;
+  const child = (0, import_node_child_process.spawn)(server.command, server.args ?? [], {
+    cwd: server.cwd,
+    env: { ...process.env, ...server.env },
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true
+  });
+  let stderr = "";
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk) => {
+    stderr += chunk;
+    if (stderr.length > 64e3) {
+      stderr = stderr.slice(-64e3);
+    }
+  });
+  let buffer = Buffer.alloc(0);
+  const messages = [];
+  let resolveWait = null;
+  let rejectWait = null;
+  let waitId = null;
+  function fail(message) {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+    }
+    const tail = stderr.trim() ? ` stderr: ${stderr.trim().slice(0, 500)}` : "";
+    throw new UsageError(`mcp stdio (${server.name}): ${message}${tail}`);
+  }
+  child.on("error", (err) => {
+    if (rejectWait) {
+      rejectWait(
+        new UsageError(
+          `mcp stdio (${server.name}): failed to spawn: ${err.message}`
+        )
+      );
+    }
+  });
+  child.stdout?.on("data", (chunk) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    for (; ; ) {
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) break;
+      const header = buffer.subarray(0, headerEnd).toString("utf8");
+      const match = /Content-Length:\s*(\d+)/i.exec(header);
+      if (!match) {
+        const nl = buffer.indexOf("\n");
+        if (nl === -1) break;
+        const line = buffer.subarray(0, nl).toString("utf8").trim();
+        buffer = buffer.subarray(nl + 1);
+        if (!line) continue;
+        try {
+          const msg = JSON.parse(line);
+          onMessage(msg);
+        } catch {
+          fail(`invalid JSON line from server`);
+        }
+        continue;
+      }
+      const length = Number(match[1]);
+      const bodyStart = headerEnd + 4;
+      if (buffer.length < bodyStart + length) break;
+      const body = buffer.subarray(bodyStart, bodyStart + length).toString("utf8");
+      buffer = buffer.subarray(bodyStart + length);
+      try {
+        const msg = JSON.parse(body);
+        onMessage(msg);
+      } catch {
+        fail("invalid JSON-RPC body from server");
+      }
+    }
+  });
+  function onMessage(msg) {
+    if (msg.id !== void 0 && msg.id !== null && resolveWait) {
+      if (waitId === null || msg.id === waitId) {
+        const resolve = resolveWait;
+        resolveWait = null;
+        rejectWait = null;
+        waitId = null;
+        resolve(msg);
+        return;
+      }
+    }
+    messages.push(msg);
+  }
+  function writeMessage(msg) {
+    const body = JSON.stringify(msg);
+    const frame = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r
+\r
+${body}`;
+    if (!child.stdin?.writable) {
+      fail("stdin not writable");
+    }
+    child.stdin.write(frame);
+  }
+  function remainingMs() {
+    return Math.max(1, Math.min(options.timeoutMs, deadline - Date.now()));
+  }
+  function request(method, params) {
+    if (Date.now() > deadline) {
+      return Promise.reject(
+        new UsageError(`mcp stdio (${server.name}): overall deadline exceeded`)
+      );
+    }
+    const id = Date.now() + Math.floor(Math.random() * 1e3);
+    const payload = {
+      jsonrpc: "2.0",
+      id,
+      method,
+      params
+    };
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        resolveWait = null;
+        rejectWait = null;
+        waitId = null;
+        reject(
+          new UsageError(
+            `mcp stdio (${server.name}): timeout waiting for ${method}`
+          )
+        );
+      }, remainingMs());
+      waitId = id;
+      resolveWait = (msg) => {
+        clearTimeout(timer);
+        if (msg.error) {
+          reject(
+            new UsageError(
+              `mcp stdio (${server.name}): ${method} error: ${msg.error.message}`
+            )
+          );
+          return;
+        }
+        resolve(msg.result);
+      };
+      rejectWait = (err) => {
+        clearTimeout(timer);
+        reject(err);
+      };
+      writeMessage(payload);
+    });
+  }
+  try {
+    await request("initialize", {
+      protocolVersion: options.protocolVersion,
+      capabilities: {},
+      clientInfo: {
+        name: "mcp-tools-list-validate",
+        version: "0.1.0"
+      }
+    });
+    writeMessage({
+      jsonrpc: "2.0",
+      method: "notifications/initialized"
+    });
+    const tools = [];
+    let cursor;
+    let pages = 0;
+    let residualCursor;
+    for (; ; ) {
+      pages += 1;
+      if (pages > options.maxPages) {
+        residualCursor = cursor;
+        break;
+      }
+      const result = await request(
+        "tools/list",
+        cursor ? { cursor } : {}
+      );
+      if (!result || !Array.isArray(result.tools)) {
+        fail("tools/list result missing tools array");
+      }
+      tools.push(...result.tools);
+      if (tools.length > options.maxTools) {
+        residualCursor = result.nextCursor;
+        break;
+      }
+      if (!result.nextCursor) {
+        residualCursor = void 0;
+        break;
+      }
+      cursor = result.nextCursor;
+    }
+    return { tools, nextCursor: residualCursor };
+  } finally {
+    try {
+      child.stdin?.end();
+    } catch {
+    }
+    try {
+      child.kill("SIGTERM");
+    } catch {
+    }
+  }
+}
+
+// src/mcp/list-tools.ts
+async function listToolsLive(server, config, defaultCwd) {
+  const options = {
+    timeoutMs: config.timeoutMs,
+    deadlineMs: config.deadlineMs,
+    maxPages: config.maxPages,
+    maxTools: config.maxTools,
+    protocolVersion: config.mcpSchemaVersion
+  };
+  if (server.transport === "stdio") {
+    const withCwd = {
+      ...server,
+      cwd: server.cwd ?? defaultCwd
+    };
+    const result2 = await listToolsStdio(withCwd, options);
+    return {
+      tools: result2.tools,
+      nextCursor: result2.nextCursor,
+      serverName: withCwd.name,
+      transport: "stdio"
+    };
+  }
+  const result = await listToolsHttp(server, {
+    ...options,
+    allowInsecureHttp: config.allowInsecureHttp,
+    allowedHosts: config.allowedHosts
+  });
+  return {
+    tools: result.tools,
+    nextCursor: result.nextCursor,
+    mcpHost: result.host,
+    serverName: server.name,
+    transport: "http"
+  };
+}
+
+// src/parse.ts
+function isObject3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function normalizeToolsPayload(raw) {
@@ -7959,10 +8505,10 @@ function normalizeToolsPayload(raw) {
       envelope: false
     };
   }
-  if (!isObject2(raw)) {
+  if (!isObject3(raw)) {
     throw new UsageError("tools list root must be an object or array");
   }
-  if (isObject2(raw.result) && Array.isArray(raw.result.tools)) {
+  if (isObject3(raw.result) && Array.isArray(raw.result.tools)) {
     const result = raw.result;
     return {
       tools: result.tools,
@@ -8082,7 +8628,7 @@ function ruleIdToCode(ruleId) {
 // src/schema.ts
 var MAX_NODES = 5e3;
 var MAX_ERRORS = 20;
-function isObject3(value) {
+function isObject4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function countNodes(value, acc = { n: 0 }) {
@@ -8090,14 +8636,14 @@ function countNodes(value, acc = { n: 0 }) {
   if (acc.n > MAX_NODES) return acc.n;
   if (Array.isArray(value)) {
     for (const item of value) countNodes(item, acc);
-  } else if (isObject3(value)) {
+  } else if (isObject4(value)) {
     for (const v of Object.values(value)) countNodes(v, acc);
   }
   return acc.n;
 }
 function hasExternalRef(value) {
   if (Array.isArray(value)) return value.some(hasExternalRef);
-  if (!isObject3(value)) return false;
+  if (!isObject4(value)) return false;
   if (typeof value.$ref === "string") {
     if (!value.$ref.startsWith("#")) return true;
   }
@@ -8159,10 +8705,10 @@ function validateToolSchemas(tools, profile) {
   const findings = [];
   const severity = schemaSeverity(profile);
   tools.forEach((tool, index) => {
-    if (!isObject3(tool)) return;
+    if (!isObject4(tool)) return;
     const toolName = typeof tool.name === "string" ? tool.name : void 0;
-    if (isObject3(tool.inputSchema)) {
-      const path3 = `$.tools[${index}].inputSchema`;
+    if (isObject4(tool.inputSchema)) {
+      const path4 = `$.tools[${index}].inputSchema`;
       if (countNodes(tool.inputSchema) > MAX_NODES) {
         findings.push(
           makeFinding(
@@ -8171,7 +8717,7 @@ function validateToolSchemas(tools, profile) {
             `schema validation budget exceeded (>${MAX_NODES} nodes)`,
             toolName,
             index,
-            path3
+            path4
           )
         );
       } else if (hasExternalRef(tool.inputSchema)) {
@@ -8182,7 +8728,7 @@ function validateToolSchemas(tools, profile) {
             "inputSchema has external or file $ref; inline all $refs for offline validation",
             toolName,
             index,
-            path3
+            path4
           )
         );
       } else {
@@ -8196,7 +8742,7 @@ function validateToolSchemas(tools, profile) {
               "schema validation budget exceeded (compile >100ms)",
               toolName,
               index,
-              path3
+              path4
             )
           );
         } else if (!result.ok) {
@@ -8207,14 +8753,14 @@ function validateToolSchemas(tools, profile) {
               `inputSchema failed Ajv meta-validation: ${result.message}`,
               toolName,
               index,
-              path3
+              path4
             )
           );
         }
       }
     }
-    if (isObject3(tool.outputSchema)) {
-      const path3 = `$.tools[${index}].outputSchema`;
+    if (isObject4(tool.outputSchema)) {
+      const path4 = `$.tools[${index}].outputSchema`;
       if (countNodes(tool.outputSchema) > MAX_NODES) {
         findings.push(
           makeFinding(
@@ -8223,7 +8769,7 @@ function validateToolSchemas(tools, profile) {
             `schema validation budget exceeded (>${MAX_NODES} nodes)`,
             toolName,
             index,
-            path3
+            path4
           )
         );
       } else if (hasExternalRef(tool.outputSchema)) {
@@ -8234,7 +8780,7 @@ function validateToolSchemas(tools, profile) {
             "outputSchema has external or file $ref; inline all $refs for offline validation",
             toolName,
             index,
-            path3
+            path4
           )
         );
       } else {
@@ -8247,7 +8793,7 @@ function validateToolSchemas(tools, profile) {
               `outputSchema failed Ajv meta-validation: ${result.message}`,
               toolName,
               index,
-              path3
+              path4
             )
           );
         }
@@ -8341,7 +8887,7 @@ function finding(ruleId, severity, message, extra = {}) {
     ...extra
   };
 }
-function isObject4(value) {
+function isObject5(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function scalarCount(s) {
@@ -8400,7 +8946,7 @@ function runRules(catalog, ctx) {
   const names = /* @__PURE__ */ new Map();
   catalog.tools.forEach((tool, index) => {
     const basePath = `$.tools[${index}]`;
-    if (!isObject4(tool)) {
+    if (!isObject5(tool)) {
       findings.push(
         finding("PFMTL-TOOL-001", "error", "Tool entry must be an object", {
           toolIndex: index,
@@ -8563,7 +9109,7 @@ function runRules(catalog, ctx) {
           jsonPath: `${basePath}.inputSchema`
         })
       );
-    } else if (!isObject4(tool.inputSchema)) {
+    } else if (!isObject5(tool.inputSchema)) {
       findings.push(
         finding("PFMTL-TOOL-007", "error", "inputSchema must be an object", {
           toolName: nameValue,
@@ -8587,7 +9133,7 @@ function runRules(catalog, ctx) {
           )
         );
       }
-      if ("properties" in schema && !isObject4(schema.properties)) {
+      if ("properties" in schema && !isObject5(schema.properties)) {
         findings.push(
           finding(
             "PFMTL-TOOL-009",
@@ -8601,7 +9147,7 @@ function runRules(catalog, ctx) {
           )
         );
       }
-      if ("properties" in schema && isObject4(schema.properties) && Object.keys(schema.properties).length === 0) {
+      if ("properties" in schema && isObject5(schema.properties) && Object.keys(schema.properties).length === 0) {
         findings.push(
           finding(
             "PFMTL-SCHEMA-003",
@@ -8634,7 +9180,7 @@ function runRules(catalog, ctx) {
       }
     }
     if ("outputSchema" in tool) {
-      if (!isObject4(tool.outputSchema)) {
+      if (!isObject5(tool.outputSchema)) {
         findings.push(
           finding(
             "PFMTL-TOOL-011",
@@ -8663,7 +9209,7 @@ function runRules(catalog, ctx) {
       }
     }
     if ("annotations" in tool) {
-      if (!isObject4(tool.annotations)) {
+      if (!isObject5(tool.annotations)) {
         findings.push(
           finding(
             "PFMTL-TOOL-013",
@@ -8743,20 +9289,44 @@ function decideResult(errorCount, warningCount, failOnWarnings) {
 }
 async function main() {
   const config = loadConfig();
-  if (config.mcpConfigFile) {
-    throw new UsageError(
-      "Mode B (mcp-config-file / live MCP) is not implemented in this release yet; use tools-list-file (Mode A)"
-    );
-  }
   if (config.mcpSchemaVersion !== "2025-06-18") {
     throw new UsageError(
       `unsupported mcp-schema-version: ${config.mcpSchemaVersion} (only 2025-06-18)`
     );
   }
-  const inputPath = resolveInputPath(config.toolsListFile);
-  const bytes = readFileLimited(inputPath, config.maxBytes);
-  const raw = parseJsonBytes(bytes);
-  const catalog = normalizeToolsPayload(raw);
+  let catalog;
+  let inputMode;
+  let inputPath;
+  let inputSha256;
+  let byteLength;
+  let mcpHost;
+  if (config.toolsListFile) {
+    inputMode = "file";
+    inputPath = config.toolsListFile;
+    const resolved = resolveInputPath(config.toolsListFile);
+    const bytes = readFileLimited(resolved, config.maxBytes);
+    inputSha256 = digestOf(bytes);
+    byteLength = bytes.length;
+    catalog = normalizeToolsPayload(parseJsonBytes(bytes));
+  } else {
+    inputMode = "live";
+    inputPath = config.mcpConfigFile;
+    const resolved = resolveInputPath(config.mcpConfigFile);
+    const bytes = readFileLimited(resolved, config.maxBytes);
+    inputSha256 = digestOf(bytes);
+    byteLength = bytes.length;
+    const raw = parseJsonBytes(bytes);
+    const server = parseMcpServersDocument(raw, config.mcpServer);
+    const live = await listToolsLive(server, config, import_node_path3.default.dirname(resolved));
+    mcpHost = live.mcpHost;
+    catalog = normalizeToolsPayload({
+      tools: live.tools,
+      ...live.nextCursor ? { nextCursor: live.nextCursor } : {}
+    });
+    console.log(
+      `mode=live server=${server.name} transport=${server.transport} tools=${live.tools.length}`
+    );
+  }
   const findings = runRules(catalog, {
     profile: config.profile,
     maxTools: config.maxTools,
@@ -8780,15 +9350,21 @@ async function main() {
   const reportPath = resolveOutputPath(config.reportFile);
   const report = buildReport({
     config,
-    inputMode: "file",
-    inputPath: config.toolsListFile,
-    inputSha256: digestOf(bytes),
-    byteLength: bytes.length,
+    inputMode,
+    inputPath,
+    inputSha256,
+    byteLength,
     catalog,
     digests,
     findings,
     result
   });
+  if (mcpHost) {
+    report.input.mcpHost = mcpHost;
+    report.input.provenanceHint = "live-mcp";
+  } else if (inputMode === "live") {
+    report.input.provenanceHint = "live-mcp";
+  }
   writeReport(reportPath, report);
   if (config.githubAnnotations) {
     emitAnnotations(findings);
@@ -8803,10 +9379,10 @@ async function main() {
     "report-file": reportPath,
     "tools-array-digest": toolsArrayDigest,
     "pf-tool-catalog-digest": pfCatalogDigest,
-    "input-mode": "file"
+    "input-mode": inputMode
   });
   console.log(
-    `mode=file result=${result} errors=${errorCount} warnings=${warningCount} tools=${catalog.tools.length}`
+    `mode=${inputMode} result=${result} errors=${errorCount} warnings=${warningCount} tools=${catalog.tools.length}`
   );
   return result === "pass" ? 0 : 1;
 }
