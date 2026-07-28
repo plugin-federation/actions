@@ -38,6 +38,8 @@ mcp-tools-list-validate/   # first Action (committed dist/)
 
 ## Development (maintainers)
 
+Maintainer CI uses Node 24. The hermetic Action runtime remains Node 20.
+
 ```bash
 cd mcp-tools-list-validate
 npm ci
