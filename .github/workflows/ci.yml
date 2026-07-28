@@ -32,9 +32,11 @@ jobs:
           git diff --exit-code -- dist/index.cjs \
             || (echo "::error::dist/index.cjs is stale; run npm run build and commit dist/" && exit 1)
       - name: Smoke Mode A (same entrypoint as the Action)
-        run: node dist/index.cjs
+        # Paths resolve against GITHUB_WORKSPACE (Action contract), not job working-directory.
+        run: node mcp-tools-list-validate/dist/index.cjs
+        working-directory: ${{ github.workspace }}
         env:
-          INPUT_TOOLS_LIST_FILE: fixtures/valid-tools-list.json
+          INPUT_TOOLS_LIST_FILE: mcp-tools-list-validate/fixtures/valid-tools-list.json
           INPUT_PROFILE: plugin-federation
-          INPUT_REPORT_FILE: /tmp/mcp-tools-list-report.json
+          INPUT_REPORT_FILE: ${{ runner.temp }}/mcp-tools-list-report.json
           INPUT_GITHUB_ANNOTATIONS: "false"
