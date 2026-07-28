@@ -6,7 +6,11 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -29,43 +33,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-
-// node_modules/canonicalize/lib/canonicalize.js
-var require_canonicalize = __commonJS({
-  "node_modules/canonicalize/lib/canonicalize.js"(exports2, module2) {
-    "use strict";
-    module2.exports = function serialize(object) {
-      if (typeof object === "number" && isNaN(object)) {
-        throw new Error("NaN is not allowed");
-      }
-      if (typeof object === "number" && !isFinite(object)) {
-        throw new Error("Infinity is not allowed");
-      }
-      if (object === null || typeof object !== "object") {
-        return JSON.stringify(object);
-      }
-      if (object.toJSON instanceof Function) {
-        return serialize(object.toJSON());
-      }
-      if (Array.isArray(object)) {
-        const values2 = object.reduce((t, cv, ci) => {
-          const comma = ci === 0 ? "" : ",";
-          const value = cv === void 0 || typeof cv === "symbol" ? null : cv;
-          return `${t}${comma}${serialize(value)}`;
-        }, "");
-        return `[${values2}]`;
-      }
-      const values = Object.keys(object).sort().reduce((t, cv) => {
-        if (object[cv] === void 0 || typeof object[cv] === "symbol") {
-          return t;
-        }
-        const comma = t.length === 0 ? "" : ",";
-        return `${t}${comma}${serialize(cv)}:${serialize(object[cv])}`;
-      }, "");
-      return `{${values}}`;
-    };
-  }
-});
 
 // node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS({
@@ -7840,12 +7807,58 @@ function loadConfig() {
 
 // src/digest.ts
 var import_node_crypto = require("node:crypto");
-var import_canonicalize = __toESM(require_canonicalize(), 1);
+
+// node_modules/canonicalize/lib/canonicalize.js
+function canonicalize(object, seen = /* @__PURE__ */ new Set()) {
+  if (typeof object === "number" && isNaN(object)) {
+    throw new Error("NaN is not allowed");
+  }
+  if (typeof object === "number" && !isFinite(object)) {
+    throw new Error("Infinity is not allowed");
+  }
+  if (object === null || typeof object !== "object") {
+    return JSON.stringify(object);
+  }
+  if (typeof object.toJSON === "function") {
+    if (seen.has(object)) {
+      throw new Error("Circular reference detected");
+    }
+    seen.add(object);
+    const result2 = canonicalize(object.toJSON(), seen);
+    seen.delete(object);
+    return result2;
+  }
+  if (seen.has(object)) {
+    throw new Error("Circular reference detected");
+  }
+  seen.add(object);
+  let result;
+  if (Array.isArray(object)) {
+    const values = object.map((cv) => {
+      const value = cv === void 0 || typeof cv === "symbol" ? null : cv;
+      return canonicalize(value, seen);
+    });
+    result = `[${values.join(",")}]`;
+  } else {
+    const parts = [];
+    for (const key of Object.keys(object).sort()) {
+      if (object[key] === void 0 || typeof object[key] === "symbol") {
+        continue;
+      }
+      parts.push(`${canonicalize(key)}:${canonicalize(object[key], seen)}`);
+    }
+    result = `{${parts.join(",")}}`;
+  }
+  seen.delete(object);
+  return result;
+}
+
+// src/digest.ts
 function isObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function sha256Jcs(value) {
-  const canonical = (0, import_canonicalize.default)(value);
+  const canonical = canonicalize(value);
   if (canonical === void 0) {
     throw new Error("canonicalize returned undefined");
   }
