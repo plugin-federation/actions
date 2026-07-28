@@ -70,12 +70,36 @@ When multiple servers are defined, set `mcp-server` to the key name.
 - `plugin-federation` (default) — MCP shape + composition limits as errors  
 - `mcp` — true MCP-required shape as errors; many PF limits as warnings  
 
+## Live integration tests
+
+Public remote MCP servers (no secrets):
+
+| Server | URL |
+|---|---|
+| DeepWiki | `https://mcp.deepwiki.com/mcp` |
+| Cloudflare Docs | `https://docs.mcp.cloudflare.com/mcp` |
+| Context7 | `https://mcp.context7.com/mcp` |
+
+GitHub remote MCP (token required):
+
+| Server | URL | Auth |
+|---|---|---|
+| GitHub | `https://api.githubcopilot.com/mcp/` | `Authorization: Bearer ${GITHUB_TOKEN}` |
+
+```bash
+npm run test:live                 # public + GitHub if GITHUB_TOKEN/GH_TOKEN set
+SKIP_LIVE_MCP=1 npm run test:live # skip all live network tests
+```
+
+Config fixture: `fixtures/live-mcp-servers.json`.
+
 ## Local development (maintainers only)
 
 ```bash
 npm ci
 npm run build   # writes dist/index.cjs — commit this file
-npm test
+npm test        # offline unit tests
+npm run test:live
 
 # Mode A
 INPUT_TOOLS_LIST_FILE=fixtures/valid-tools-list.json \
@@ -86,6 +110,13 @@ node dist/index.cjs
 # Mode B (stdio mock)
 INPUT_MCP_CONFIG_FILE=fixtures/mcp-servers.json \
 INPUT_PROFILE=plugin-federation \
+INPUT_GITHUB_ANNOTATIONS=false \
+node dist/index.cjs
+
+# Mode B (public DeepWiki)
+INPUT_MCP_CONFIG_FILE=fixtures/live-mcp-servers.json \
+INPUT_MCP_SERVER=deepwiki \
+INPUT_PROFILE=mcp \
 INPUT_GITHUB_ANNOTATIONS=false \
 node dist/index.cjs
 ```
