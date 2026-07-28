@@ -1,0 +1,18 @@
+# CodeQL configuration for plugin-federation/actions
+#
+# dist/ is esbuild output (vendored Ajv + app code) and must not be analyzed:
+# it produces hundreds of false positives (js/useless-expression, etc.).
+# Scan TypeScript sources and tests only for JS/TS; workflows via language: actions.
+
+name: Plugin Federation Actions
+
+paths:
+  - mcp-tools-list-validate/src
+  - mcp-tools-list-validate/test
+  - .github
+
+paths-ignore:
+  - "**/dist/**"
+  - "**/node_modules/**"
+  - "**/*.cjs"
+  - mcp-tools-list-validate/fixtures/**

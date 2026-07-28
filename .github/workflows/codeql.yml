@@ -34,6 +34,8 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+          # Exclude dist/ (generated bundle) — see .github/codeql/codeql-config.yml
+          config-file: .github/codeql/codeql-config.yml
           # Default + security-extended for Actions (e.g. unpinned actions, missing permissions)
           queries: security-extended,security-and-quality
 
