@@ -20,16 +20,23 @@ Nexus must have `NEXUS_OIDC_GITHUB_AUDIENCE` set to the same value as
 ## Usage
 
 ```yaml
+# Production (defaults nexus-url + oidc-audience to https://api.plugin-federation.com)
 - id: nexus-auth
   uses: plugin-federation/actions/nexus-oidc-exchange@main
   with:
-    nexus-url: ${{ vars.NEXUS_URL }}
     tenant-id: ${{ vars.TENANT_ID }}
-    oidc-audience: ${{ vars.NEXUS_OIDC_AUDIENCE }}
+
+# Nonprod override
+- id: nexus-auth
+  uses: plugin-federation/actions/nexus-oidc-exchange@main
+  with:
+    nexus-url: ${{ vars.NEXUS_URL }}              # e.g. https://api.nonprod.plugin-federation.com
+    oidc-audience: ${{ vars.NEXUS_OIDC_AUDIENCE }} # defaults to nexus-url when omitted
+    tenant-id: ${{ vars.TENANT_ID }}
 
 - uses: plugin-federation/actions/nexus-record-tool-catalog@main
   with:
-    nexus-url: ${{ vars.NEXUS_URL }}
+    # nexus-url optional (same production default)
     tenant-id: ${{ vars.TENANT_ID }}
     source-id: ${{ vars.MCP_SOURCE_ID }}
     access-token: ${{ steps.nexus-auth.outputs.access-token }}
@@ -40,9 +47,9 @@ Nexus must have `NEXUS_OIDC_GITHUB_AUDIENCE` set to the same value as
 
 | Input | Required | Description |
 |-------|----------|-------------|
-| `nexus-url` | yes | Nexus origin |
+| `nexus-url` | no | Nexus origin (default: `https://api.plugin-federation.com`) |
 | `tenant-id` | yes | Tenant UUID |
-| `oidc-audience` | yes | `getIDToken` audience |
+| `oidc-audience` | no | `getIDToken` audience (default: same as `nexus-url`) |
 | `token-file` | no | Where to write the token (default: `$RUNNER_TEMP/nexus.token`) |
 
 ## Outputs

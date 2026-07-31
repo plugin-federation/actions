@@ -25,19 +25,18 @@ steps:
   - id: auth
     uses: plugin-federation/actions/nexus-oidc-exchange@main
     with:
-      nexus-url: ${{ vars.NEXUS_URL }}
       tenant-id: ${{ vars.TENANT_ID }}
-      oidc-audience: ${{ vars.NEXUS_OIDC_AUDIENCE }}
+      # nexus-url / oidc-audience default to https://api.plugin-federation.com
 
   - id: catalog
     uses: plugin-federation/actions/nexus-record-tool-catalog@main
     with:
-      nexus-url: ${{ vars.NEXUS_URL }}
       tenant-id: ${{ vars.TENANT_ID }}
       source-id: ${{ vars.MCP_SOURCE_ID }}
       access-token: ${{ steps.auth.outputs.access-token }}
       tools-list-file: ci/tools-list.json
       # source-version defaults to github.sha
+      # nexus-url optional (default production)
 
   - run: echo "digest=${{ steps.catalog.outputs.catalog-digest }}"
 ```
@@ -46,7 +45,7 @@ steps:
 
 | Input | Required | Description |
 |-------|----------|-------------|
-| `nexus-url` | yes | Nexus origin |
+| `nexus-url` | no | Nexus origin (default: `https://api.plugin-federation.com`) |
 | `tenant-id` | yes | Tenant UUID |
 | `source-id` | yes | Tool source UUID |
 | `access-token` | yes | Nexus Bearer token |
