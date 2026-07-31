@@ -3,98 +3,58 @@
 Apache-2.0 GitHub Actions for MCP developers and Plugin Federation customers.
 
 ```yaml
-uses: plugin-federation/actions/mcp-tools-list-validate@v1
-uses: plugin-federation/actions/nexus-oidc-exchange@v1
-uses: plugin-federation/actions/nexus-record-tool-catalog@v1
+uses: plugin-federation/actions/mcp-tools-list-validate@main
+uses: plugin-federation/actions/nexus-oidc-exchange@main
+uses: plugin-federation/actions/nexus-record-tool-catalog@main
+uses: plugin-federation/actions/mcp-tool-judge-pipeline@main
 ```
 
 ## Actions
 
-| Action | Path | Status |
+| Action | Path | Purpose |
 |---|---|---|
-| MCP `tools/list` validate | [`mcp-tools-list-validate/`](./mcp-tools-list-validate/) | Mode A + B |
-| Nexus OIDC exchange | [`nexus-oidc-exchange/`](./nexus-oidc-exchange/) | Composite |
-| Nexus record tool catalog | [`nexus-record-tool-catalog/`](./nexus-record-tool-catalog/) | Composite |
+| MCP `tools/list` validate | [`mcp-tools-list-validate/`](./mcp-tools-list-validate/) | Structural validate |
+| Nexus OIDC exchange | [`nexus-oidc-exchange/`](./nexus-oidc-exchange/) | GHA OIDC → Nexus JWT |
+| Nexus record tool catalog | [`nexus-record-tool-catalog/`](./nexus-record-tool-catalog/) | POST tools/list catalog |
+| MCP tool fingerprint | [`mcp-tool-fingerprint/`](./mcp-tool-fingerprint/) | Fingerprints for analysis cache |
+| Nexus list tool judges | [`nexus-list-tool-judges/`](./nexus-list-tool-judges/) | Fetch judge prompts from Nexus |
+| Nexus tool analysis lookup | [`nexus-tool-analysis-lookup/`](./nexus-tool-analysis-lookup/) | Pending vs analyzed tools |
+| MCP tool LLM judge | [`mcp-tool-judge/`](./mcp-tool-judge/) | Run model on pending tools |
+| Nexus record tool analyses | [`nexus-record-tool-analyses/`](./nexus-record-tool-analyses/) | POST analysis results |
+| MCP tool judge pipeline | [`mcp-tool-judge-pipeline/`](./mcp-tool-judge-pipeline/) | End-to-end multi-judge CI |
 
-### `mcp-tools-list-validate`
+### LLM-as-judge (CI execution, Nexus definitions)
 
-Deterministic validation of an MCP tool catalog:
-
-- **Mode A:** offline JSON file (`tools-list-file`)
-- **Mode B:** live `tools/list` via `mcpServers` config (`mcp-config-file`) — stdio or HTTP
-
-Profiles: `mcp` (protocol shape) and `plugin-federation` (composition limits).
-
-See [mcp-tools-list-validate/README.md](./mcp-tools-list-validate/README.md).
-
-### `nexus-oidc-exchange`
-
-Exchange a GitHub Actions OIDC ID token for a short-lived Nexus access token.
-Requires `permissions: id-token: write` and a tenant OIDC trust policy.
-
-See [nexus-oidc-exchange/README.md](./nexus-oidc-exchange/README.md).
-
-### `nexus-record-tool-catalog`
-
-POST a tools/list snapshot to Nexus as an immutable tool catalog for a tenant
-`sourceId`. Typically paired with `nexus-oidc-exchange`.
-
-See [nexus-record-tool-catalog/README.md](./nexus-record-tool-catalog/README.md).
-
-### Pipeline dogfood (OIDC + catalog)
+1. **Tenant admin** creates judges on Nexus (`systemPrompt`, `version`, etc.).
+2. **CI** loads judges + fingerprints, asks Nexus what is pending, runs the
+   model with **CI secrets**, records results.
+3. MCP repos **do not** copy system prompts.
 
 ```yaml
 permissions:
   id-token: write
   contents: read
-
-jobs:
-  nexus-catalog:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # … export or download tools-list.json …
-      - id: auth
-        uses: plugin-federation/actions/nexus-oidc-exchange@main
-        with:
-          tenant-id: ${{ vars.TENANT_ID }}
-          # nexus-url defaults to https://api.plugin-federation.com
-          # nonprod: nexus-url + oidc-audience → https://api.nonprod.plugin-federation.com
-          nexus-url: ${{ vars.NEXUS_URL }}
-          oidc-audience: ${{ vars.NEXUS_OIDC_AUDIENCE }}
-      - id: catalog
-        uses: plugin-federation/actions/nexus-record-tool-catalog@main
-        with:
-          tenant-id: ${{ vars.TENANT_ID }}
-          source-id: ${{ vars.MCP_SOURCE_ID }}
-          access-token: ${{ steps.auth.outputs.access-token }}
-          tools-list-file: ci/tools-list.json
-          nexus-url: ${{ vars.NEXUS_URL }}
+steps:
+  - id: auth
+    uses: plugin-federation/actions/nexus-oidc-exchange@main
+    with:
+      tenant-id: ${{ vars.TENANT_ID }}
+      nexus-url: ${{ vars.NEXUS_URL }}
+      oidc-audience: ${{ vars.NEXUS_OIDC_AUDIENCE }}
+  - uses: plugin-federation/actions/mcp-tool-judge-pipeline@main
+    with:
+      nexus-url: ${{ vars.NEXUS_URL }}
+      tenant-id: ${{ vars.TENANT_ID }}
+      source-id: ${{ vars.MCP_SOURCE_ID }}
+      access-token: ${{ steps.auth.outputs.access-token }}
+      tools-list-file: ci/tools-list.json
+    env:
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
 ```
 
-Schema verification / proposal creation will land as a follow-up
-(`mcp-schema-pipeline` or a dedicated action).
+## Development
 
-## Repository layout
-
-```text
-mcp-tools-list-validate/      # JS Action (committed dist/)
-nexus-oidc-exchange/          # composite (bash)
-nexus-record-tool-catalog/    # composite (bash)
-.github/workflows/            # maintainer CI
-```
-
-## Development (maintainers)
-
-Maintainer CI uses Node 24. The JS Action runtime is Node 20
-(`runs.using: node20`). Composite Actions need no build step.
-
-```bash
-cd mcp-tools-list-validate
-npm ci
-npm run build   # update dist/ and commit it
-npm test
-```
+Maintainer CI uses Node 24 for `mcp-tools-list-validate`. Composite Actions need no build.
 
 ## License
 

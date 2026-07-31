@@ -1,0 +1,41 @@
+name: "MCP tool fingerprint"
+description: >-
+  Compute content-addressed fingerprints for MCP tools (name, description,
+  inputSchema, outputSchema, annotations) for Nexus analysis cache lookup.
+author: "Plugin Federation"
+branding:
+  icon: hash
+  color: purple
+
+inputs:
+  tools-list-file:
+    description: "Path to tools/list JSON ({ tools: [...] })"
+    required: true
+  output-file:
+    description: "Where to write fingerprint JSON"
+    required: false
+    default: "tool-fingerprints.json"
+
+outputs:
+  output-file:
+    description: "Path to written fingerprint file"
+    value: ${{ steps.run.outputs.output-file }}
+  tool-count:
+    description: "Number of tools fingerprinted"
+    value: ${{ steps.run.outputs.tool-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Fingerprint tools
+      id: run
+      shell: bash
+      env:
+        INPUT_TOOLS_LIST_FILE: ${{ inputs.tools-list-file }}
+        INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
+      run: |
+        set -euo pipefail
+        node "${{ github.action_path }}/fingerprint.mjs"
+        COUNT="$(jq '.tools | length' "${INPUT_OUTPUT_FILE}")"
+        echo "output-file=${INPUT_OUTPUT_FILE}" >> "$GITHUB_OUTPUT"
+        echo "tool-count=${COUNT}" >> "$GITHUB_OUTPUT"

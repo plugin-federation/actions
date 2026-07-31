@@ -1,0 +1,76 @@
+name: "Nexus list tool judges"
+description: >-
+  Fetch tenant tool-judge definitions (system prompts, templates, preferred
+  model hints) from Nexus. Model API keys stay in CI.
+author: "Plugin Federation"
+branding:
+  icon: list
+  color: purple
+
+inputs:
+  nexus-url:
+    description: "Nexus base URL (default production)"
+    required: false
+    default: "https://api.plugin-federation.com"
+  tenant-id:
+    description: "Tenant UUID"
+    required: true
+  access-token:
+    description: "Nexus Bearer token (from nexus-oidc-exchange)"
+    required: true
+  enabled-only:
+    description: "If true, only enabled judges"
+    required: false
+    default: "true"
+  output-file:
+    description: "Write judges JSON array/items here"
+    required: false
+    default: "tool-judges.json"
+
+outputs:
+  output-file:
+    description: "Path to judges JSON"
+    value: ${{ steps.run.outputs.output-file }}
+  judge-count:
+    description: "Number of judges returned"
+    value: ${{ steps.run.outputs.judge-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: List tool judges
+      id: run
+      shell: bash
+      env:
+        NEXUS_URL: ${{ inputs.nexus-url }}
+        TENANT_ID: ${{ inputs.tenant-id }}
+        ACCESS_TOKEN: ${{ inputs.access-token }}
+        ENABLED_ONLY: ${{ inputs.enabled-only }}
+        OUTPUT_FILE: ${{ inputs.output-file }}
+      run: |
+        set -euo pipefail
+        : "${TENANT_ID:?}"
+        : "${ACCESS_TOKEN:?}"
+        echo "::add-mask::${ACCESS_TOKEN}"
+        if [[ -z "${NEXUS_URL:-}" ]]; then
+          NEXUS_URL="https://api.plugin-federation.com"
+        fi
+        NEXUS_URL="${NEXUS_URL%/}"
+        QS=""
+        if [[ "${ENABLED_ONLY}" == "true" ]]; then
+          QS="?enabledOnly=true"
+        fi
+        HTTP_CODE="$(curl -sS -o "${RUNNER_TEMP}/judges-response.json" -w "%{http_code}" \
+          -H "authorization: Bearer ${ACCESS_TOKEN}" \
+          -H "accept: application/json" \
+          "${NEXUS_URL}/api/v1/tenants/${TENANT_ID}/tool-judges${QS}")"
+        if [[ "$HTTP_CODE" != "200" ]]; then
+          echo "::error::list tool judges failed (HTTP ${HTTP_CODE})"
+          cat "${RUNNER_TEMP}/judges-response.json" || true
+          exit 1
+        fi
+        jq '.' "${RUNNER_TEMP}/judges-response.json" > "${OUTPUT_FILE}"
+        COUNT="$(jq '.items | length' "${OUTPUT_FILE}")"
+        echo "judge-count=${COUNT}" >> "$GITHUB_OUTPUT"
+        echo "output-file=${OUTPUT_FILE}" >> "$GITHUB_OUTPUT"
+        echo "Fetched ${COUNT} tool judges → ${OUTPUT_FILE}"
