@@ -1,0 +1,143 @@
+name: "Nexus OIDC exchange"
+description: >-
+  Exchange a GitHub Actions OIDC ID token for a short-lived Nexus access token
+  (provider github_actions). Requires permissions: id-token: write.
+author: "Plugin Federation"
+branding:
+  icon: key
+  color: purple
+
+inputs:
+  nexus-url:
+    description: "Nexus base URL (e.g. https://api.nonprod.plugin-federation.com)"
+    required: true
+  tenant-id:
+    description: "Target tenant UUID (must match an enabled OIDC trust policy)"
+    required: true
+  oidc-audience:
+    description: >-
+      Audience passed to getIDToken / ACTIONS_ID_TOKEN_REQUEST_URL. Must match
+      Nexus NEXUS_OIDC_GITHUB_AUDIENCE.
+    required: true
+  token-file:
+    description: "Path to write the access token (default: runner temp)"
+    required: false
+    default: ""
+
+outputs:
+  access-token:
+    description: "Short-lived Nexus Bearer token (masked)"
+    value: ${{ steps.exchange.outputs.access-token }}
+  token-file:
+    description: "Path where the access token was written"
+    value: ${{ steps.exchange.outputs.token-file }}
+  principal:
+    description: "Nexus principal from the exchange response"
+    value: ${{ steps.exchange.outputs.principal }}
+  matched-policy-id:
+    description: "OIDC trust policy that matched this workflow"
+    value: ${{ steps.exchange.outputs.matched-policy-id }}
+  roles:
+    description: "Comma-separated roles granted by the policy"
+    value: ${{ steps.exchange.outputs.roles }}
+  expires-at:
+    description: "Token expiry (ISO-8601) when returned by Nexus"
+    value: ${{ steps.exchange.outputs.expires-at }}
+
+runs:
+  using: composite
+  steps:
+    - name: Exchange GitHub OIDC for Nexus access token
+      id: exchange
+      shell: bash
+      env:
+        NEXUS_URL: ${{ inputs.nexus-url }}
+        TENANT_ID: ${{ inputs.tenant-id }}
+        OIDC_AUDIENCE: ${{ inputs.oidc-audience }}
+        TOKEN_FILE_INPUT: ${{ inputs.token-file }}
+      run: |
+        set -euo pipefail
+
+        : "${NEXUS_URL:?nexus-url is required}"
+        : "${TENANT_ID:?tenant-id is required}"
+        : "${OIDC_AUDIENCE:?oidc-audience is required}"
+        : "${ACTIONS_ID_TOKEN_REQUEST_URL:?permissions.id-token: write is required}"
+        : "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?permissions.id-token: write is required}"
+
+        if ! command -v jq >/dev/null 2>&1; then
+          echo "::error::jq is required (preinstalled on GitHub-hosted runners)"
+          exit 1
+        fi
+        if ! command -v curl >/dev/null 2>&1; then
+          echo "::error::curl is required"
+          exit 1
+        fi
+
+        NEXUS_URL="${NEXUS_URL%/}"
+        TOKEN_FILE="${TOKEN_FILE_INPUT:-}"
+        if [[ -z "$TOKEN_FILE" ]]; then
+          TOKEN_FILE="${RUNNER_TEMP}/nexus.token"
+        fi
+
+        echo "Requesting GitHub Actions OIDC token (audience=${OIDC_AUDIENCE})..."
+        ID_TOKEN="$(curl -fsSL \
+          -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${OIDC_AUDIENCE}" \
+          | jq -r .value)"
+        if [[ -z "$ID_TOKEN" || "$ID_TOKEN" == "null" ]]; then
+          echo "::error::Failed to obtain GitHub Actions OIDC id token"
+          exit 1
+        fi
+
+        jq -n \
+          --arg provider github_actions \
+          --arg tenantId "$TENANT_ID" \
+          --arg idToken "$ID_TOKEN" \
+          '{provider:$provider,tenantId:$tenantId,idToken:$idToken}' \
+          > "${RUNNER_TEMP}/nexus-oidc-exchange-request.json"
+
+        HTTP_CODE="$(curl -sS -o "${RUNNER_TEMP}/nexus-oidc-exchange-response.json" -w "%{http_code}" \
+          -X POST "${NEXUS_URL}/api/v1/auth/oidc/exchanges" \
+          -H "content-type: application/json" \
+          --data-binary @"${RUNNER_TEMP}/nexus-oidc-exchange-request.json")"
+
+        if [[ "$HTTP_CODE" != "201" && "$HTTP_CODE" != "200" ]]; then
+          echo "::error::Nexus OIDC exchange failed (HTTP ${HTTP_CODE})"
+          # Never print idToken; response body should be a problem document only.
+          cat "${RUNNER_TEMP}/nexus-oidc-exchange-response.json" || true
+          echo
+          exit 1
+        fi
+
+        if ! jq -e '.accessToken' "${RUNNER_TEMP}/nexus-oidc-exchange-response.json" >/dev/null; then
+          echo "::error::Nexus OIDC exchange response missing accessToken"
+          cat "${RUNNER_TEMP}/nexus-oidc-exchange-response.json" || true
+          echo
+          exit 1
+        fi
+
+        ACCESS_TOKEN="$(jq -r '.accessToken' "${RUNNER_TEMP}/nexus-oidc-exchange-response.json")"
+        PRINCIPAL="$(jq -r '.principal // empty' "${RUNNER_TEMP}/nexus-oidc-exchange-response.json")"
+        POLICY_ID="$(jq -r '.matchedPolicyId // empty' "${RUNNER_TEMP}/nexus-oidc-exchange-response.json")"
+        ROLES="$(jq -r '(.roles // []) | join(",")' "${RUNNER_TEMP}/nexus-oidc-exchange-response.json")"
+        EXPIRES_AT="$(jq -r '.expiresAt // empty' "${RUNNER_TEMP}/nexus-oidc-exchange-response.json")"
+
+        printf '%s' "$ACCESS_TOKEN" > "$TOKEN_FILE"
+        chmod 600 "$TOKEN_FILE" 2>/dev/null || true
+
+        echo "::add-mask::${ACCESS_TOKEN}"
+        {
+          echo "access-token=${ACCESS_TOKEN}"
+          echo "token-file=${TOKEN_FILE}"
+          echo "principal=${PRINCIPAL}"
+          echo "matched-policy-id=${POLICY_ID}"
+          echo "roles=${ROLES}"
+          echo "expires-at=${EXPIRES_AT}"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "Nexus principal: ${PRINCIPAL}"
+        echo "Matched policy: ${POLICY_ID}"
+        echo "Roles: ${ROLES}"
+        if [[ -n "$EXPIRES_AT" ]]; then
+          echo "Expires at: ${EXPIRES_AT}"
+        fi
