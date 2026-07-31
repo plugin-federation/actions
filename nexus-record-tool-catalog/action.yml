@@ -1,0 +1,166 @@
+name: "Nexus record tool catalog"
+description: >-
+  Map an MCP tools/list JSON file to a Nexus tool-catalog and POST it for a
+  tenant tool source (immutable content-addressed snapshot).
+author: "Plugin Federation"
+branding:
+  icon: upload
+  color: purple
+
+inputs:
+  nexus-url:
+    description: "Nexus base URL"
+    required: true
+  tenant-id:
+    description: "Tenant UUID"
+    required: true
+  source-id:
+    description: "Tool source UUID registered for this MCP server"
+    required: true
+  access-token:
+    description: "Nexus Bearer token (from nexus-oidc-exchange)"
+    required: true
+  tools-list-file:
+    description: "Path to MCP tools/list JSON ({ tools: [...] })"
+    required: true
+  source-version:
+    description: "Catalog sourceVersion (default: github.sha)"
+    required: false
+    default: ""
+  idempotency-key:
+    description: "Idempotency-Key header (default: catalog-{source-version})"
+    required: false
+    default: ""
+  request-id:
+    description: "x-request-id header (default: gha-{run_id}-{attempt})"
+    required: false
+    default: ""
+
+outputs:
+  catalog-digest:
+    description: "Content-addressed catalog digest returned by Nexus"
+    value: ${{ steps.record.outputs.catalog-digest }}
+  source-id:
+    description: "Tool source UUID"
+    value: ${{ steps.record.outputs.source-id }}
+  source-version:
+    description: "Source version recorded"
+    value: ${{ steps.record.outputs.source-version }}
+  recorded-at:
+    description: "Nexus recordedAt timestamp when present"
+    value: ${{ steps.record.outputs.recorded-at }}
+  http-status:
+    description: "HTTP status code from the catalog POST"
+    value: ${{ steps.record.outputs.http-status }}
+
+runs:
+  using: composite
+  steps:
+    - name: Record tool catalog
+      id: record
+      shell: bash
+      env:
+        NEXUS_URL: ${{ inputs.nexus-url }}
+        TENANT_ID: ${{ inputs.tenant-id }}
+        SOURCE_ID: ${{ inputs.source-id }}
+        ACCESS_TOKEN: ${{ inputs.access-token }}
+        TOOLS_LIST_FILE: ${{ inputs.tools-list-file }}
+        SOURCE_VERSION_INPUT: ${{ inputs.source-version }}
+        IDEMPOTENCY_KEY_INPUT: ${{ inputs.idempotency-key }}
+        REQUEST_ID_INPUT: ${{ inputs.request-id }}
+      run: |
+        set -euo pipefail
+
+        : "${NEXUS_URL:?nexus-url is required}"
+        : "${TENANT_ID:?tenant-id is required}"
+        : "${SOURCE_ID:?source-id is required}"
+        : "${ACCESS_TOKEN:?access-token is required}"
+        : "${TOOLS_LIST_FILE:?tools-list-file is required}"
+
+        if ! command -v jq >/dev/null 2>&1; then
+          echo "::error::jq is required (preinstalled on GitHub-hosted runners)"
+          exit 1
+        fi
+
+        if [[ ! -f "$TOOLS_LIST_FILE" ]]; then
+          echo "::error::tools-list-file not found: ${TOOLS_LIST_FILE}"
+          exit 1
+        fi
+
+        echo "::add-mask::${ACCESS_TOKEN}"
+
+        NEXUS_URL="${NEXUS_URL%/}"
+        SOURCE_VERSION="${SOURCE_VERSION_INPUT:-}"
+        if [[ -z "$SOURCE_VERSION" ]]; then
+          SOURCE_VERSION="${GITHUB_SHA:-unknown}"
+        fi
+
+        IDEMPOTENCY_KEY="${IDEMPOTENCY_KEY_INPUT:-}"
+        if [[ -z "$IDEMPOTENCY_KEY" ]]; then
+          IDEMPOTENCY_KEY="catalog-${SOURCE_VERSION}"
+        fi
+
+        REQUEST_ID="${REQUEST_ID_INPUT:-}"
+        if [[ -z "$REQUEST_ID" ]]; then
+          REQUEST_ID="gha-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-1}"
+        fi
+
+        # Map MCP tools/list → Nexus tool-catalog (contract fields only).
+        jq \
+          --arg sourceId "$SOURCE_ID" \
+          --arg sourceVersion "$SOURCE_VERSION" \
+          '{
+            sourceId: $sourceId,
+            sourceVersion: $sourceVersion,
+            tools: [
+              (.tools // .)
+              | if type == "array" then .[] else empty end
+              | {
+                  name,
+                  description: (.description // ""),
+                  inputSchema: (.inputSchema // .input_schema // {})
+                }
+                + (if .annotations then {annotations: .annotations} else {} end)
+            ]
+          }' \
+          "$TOOLS_LIST_FILE" > "${RUNNER_TEMP}/nexus-tool-catalog.json"
+
+        TOOL_COUNT="$(jq '.tools | length' "${RUNNER_TEMP}/nexus-tool-catalog.json")"
+        echo "Submitting catalog: sourceId=${SOURCE_ID} sourceVersion=${SOURCE_VERSION} tools=${TOOL_COUNT}"
+
+        HTTP_CODE="$(curl -sS -o "${RUNNER_TEMP}/nexus-catalog-response.json" -w "%{http_code}" \
+          -X POST "${NEXUS_URL}/api/v1/tenants/${TENANT_ID}/tool-sources/${SOURCE_ID}/catalogs" \
+          -H "authorization: Bearer ${ACCESS_TOKEN}" \
+          -H "content-type: application/json" \
+          -H "idempotency-key: ${IDEMPOTENCY_KEY}" \
+          -H "x-request-id: ${REQUEST_ID}" \
+          --data-binary @"${RUNNER_TEMP}/nexus-tool-catalog.json")"
+
+        echo "Catalog POST status: ${HTTP_CODE}"
+        cat "${RUNNER_TEMP}/nexus-catalog-response.json" || true
+        echo
+
+        if [[ "$HTTP_CODE" != "201" && "$HTTP_CODE" != "200" ]]; then
+          echo "::error::Nexus catalog record failed (HTTP ${HTTP_CODE})"
+          exit 1
+        fi
+
+        CATALOG_DIGEST="$(jq -r '.catalogDigest // empty' "${RUNNER_TEMP}/nexus-catalog-response.json")"
+        RECORDED_AT="$(jq -r '.recordedAt // empty' "${RUNNER_TEMP}/nexus-catalog-response.json")"
+        RESP_SOURCE="$(jq -r '.sourceId // empty' "${RUNNER_TEMP}/nexus-catalog-response.json")"
+        RESP_VERSION="$(jq -r '.sourceVersion // empty' "${RUNNER_TEMP}/nexus-catalog-response.json")"
+
+        if [[ -z "$CATALOG_DIGEST" ]]; then
+          echo "::error::Nexus response missing catalogDigest"
+          exit 1
+        fi
+
+        {
+          echo "catalog-digest=${CATALOG_DIGEST}"
+          echo "source-id=${RESP_SOURCE:-$SOURCE_ID}"
+          echo "source-version=${RESP_VERSION:-$SOURCE_VERSION}"
+          echo "recorded-at=${RECORDED_AT}"
+          echo "http-status=${HTTP_CODE}"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "Recorded catalogDigest=${CATALOG_DIGEST}"

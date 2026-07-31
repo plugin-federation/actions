@@ -2,3 +2,5 @@
 * @plugin-federation/maintainers
 
 /mcp-tools-list-validate/ @plugin-federation/maintainers
+/nexus-oidc-exchange/ @plugin-federation/maintainers
+/nexus-record-tool-catalog/ @plugin-federation/maintainers
