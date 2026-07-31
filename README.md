@@ -57,17 +57,19 @@ jobs:
       - id: auth
         uses: plugin-federation/actions/nexus-oidc-exchange@main
         with:
-          nexus-url: ${{ vars.NEXUS_URL }}
           tenant-id: ${{ vars.TENANT_ID }}
+          # nexus-url defaults to https://api.plugin-federation.com
+          # nonprod: nexus-url + oidc-audience → https://api.nonprod.plugin-federation.com
+          nexus-url: ${{ vars.NEXUS_URL }}
           oidc-audience: ${{ vars.NEXUS_OIDC_AUDIENCE }}
       - id: catalog
         uses: plugin-federation/actions/nexus-record-tool-catalog@main
         with:
-          nexus-url: ${{ vars.NEXUS_URL }}
           tenant-id: ${{ vars.TENANT_ID }}
           source-id: ${{ vars.MCP_SOURCE_ID }}
           access-token: ${{ steps.auth.outputs.access-token }}
           tools-list-file: ci/tools-list.json
+          nexus-url: ${{ vars.NEXUS_URL }}
 ```
 
 Schema verification / proposal creation will land as a follow-up
