@@ -36,9 +36,17 @@ steps:
       access-token: ${{ steps.auth.outputs.access-token }}
       tools-list-file: ci/tools-list.json
       # source-version defaults to github.sha
-      # nexus-url optional (default production)
+      # nexus-url / console-url optional (prod defaults; console derived from api. → console.)
 
-  - run: echo "digest=${{ steps.catalog.outputs.catalog-digest }}"
+  - run: |
+      echo "digest=${{ steps.catalog.outputs.catalog-digest }}"
+      echo "console=${{ steps.catalog.outputs.console-url }}"
+```
+
+The Action prints a GitHub notice and job summary link to the Console evidence page:
+
+```text
+{console}/dashboard/tool-sources/{sourceId}/catalogs/{catalogDigest}?tenantId=…&sourceVersion=…
 ```
 
 ## Inputs
@@ -46,6 +54,7 @@ steps:
 | Input | Required | Description |
 |-------|----------|-------------|
 | `nexus-url` | no | Nexus origin (default: `https://api.plugin-federation.com`) |
+| `console-url` | no | Console origin; default derives from `nexus-url` (`api.` → `console.`) |
 | `tenant-id` | yes | Tenant UUID |
 | `source-id` | yes | Tool source UUID |
 | `access-token` | yes | Nexus Bearer token |
@@ -63,6 +72,7 @@ steps:
 | `source-version` | Version recorded |
 | `recorded-at` | Server timestamp |
 | `http-status` | `201` / `200` |
+| `console-url` | Absolute Console deep link for this catalog |
 
 ## License
 

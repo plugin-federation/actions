@@ -1,7 +1,8 @@
 name: "Nexus record tool catalog"
 description: >-
   Map an MCP tools/list JSON file to a Nexus tool-catalog and POST it for a
-  tenant tool source (immutable content-addressed snapshot).
+  tenant tool source (immutable content-addressed snapshot). Emits a Console
+  deep link for operators to review catalog / schema-check evidence.
 author: "Plugin Federation"
 branding:
   icon: upload
@@ -15,6 +16,13 @@ inputs:
       https://api.nonprod.plugin-federation.com for nonprod.
     required: false
     default: "https://api.plugin-federation.com"
+  console-url:
+    description: >-
+      Console base URL for deep links. Empty derives from nexus-url by swapping
+      the api. hostname prefix for console. (e.g. api.nonprod… → console.nonprod…).
+      Production default: https://console.plugin-federation.com
+    required: false
+    default: ""
   tenant-id:
     description: "Tenant UUID"
     required: true
@@ -56,6 +64,10 @@ outputs:
   http-status:
     description: "HTTP status code from the catalog POST"
     value: ${{ steps.record.outputs.http-status }}
+  console-url:
+    description: >-
+      Absolute Console URL for this catalog's evidence / schema-check page
+    value: ${{ steps.record.outputs.console-url }}
 
 runs:
   using: composite
@@ -65,6 +77,7 @@ runs:
       shell: bash
       env:
         NEXUS_URL: ${{ inputs.nexus-url }}
+        CONSOLE_URL_INPUT: ${{ inputs.console-url }}
         TENANT_ID: ${{ inputs.tenant-id }}
         SOURCE_ID: ${{ inputs.source-id }}
         ACCESS_TOKEN: ${{ inputs.access-token }}
@@ -161,12 +174,57 @@ runs:
           exit 1
         fi
 
+        EFFECTIVE_SOURCE="${RESP_SOURCE:-$SOURCE_ID}"
+        EFFECTIVE_VERSION="${RESP_VERSION:-$SOURCE_VERSION}"
+
+        # Console base URL for operator deep links.
+        CONSOLE_BASE="${CONSOLE_URL_INPUT:-}"
+        if [[ -z "$CONSOLE_BASE" ]]; then
+          # api.nonprod.example → console.nonprod.example; api.example → console.example
+          CONSOLE_BASE="$(printf '%s' "$NEXUS_URL" | sed -E 's#^(https?://)api\.#\1console.#')"
+          if [[ "$CONSOLE_BASE" == "$NEXUS_URL" ]]; then
+            # Fallback when host is not api.* (custom domain).
+            if [[ "$NEXUS_URL" == *"nonprod"* ]]; then
+              CONSOLE_BASE="https://console.nonprod.plugin-federation.com"
+            else
+              CONSOLE_BASE="https://console.plugin-federation.com"
+            fi
+          fi
+        fi
+        CONSOLE_BASE="${CONSOLE_BASE%/}"
+
+        # Path segment must be URL-encoded (digest contains "sha256:").
+        DIGEST_SEG="$(printf '%s' "$CATALOG_DIGEST" | jq -sRr @uri)"
+        SOURCE_SEG="$(printf '%s' "$EFFECTIVE_SOURCE" | jq -sRr @uri)"
+        QUERY="tenantId=$(printf '%s' "$TENANT_ID" | jq -sRr @uri)"
+        QUERY+="&sourceVersion=$(printf '%s' "$EFFECTIVE_VERSION" | jq -sRr @uri)"
+        CONSOLE_LINK="${CONSOLE_BASE}/dashboard/tool-sources/${SOURCE_SEG}/catalogs/${DIGEST_SEG}?${QUERY}"
+
         {
           echo "catalog-digest=${CATALOG_DIGEST}"
-          echo "source-id=${RESP_SOURCE:-$SOURCE_ID}"
-          echo "source-version=${RESP_VERSION:-$SOURCE_VERSION}"
+          echo "source-id=${EFFECTIVE_SOURCE}"
+          echo "source-version=${EFFECTIVE_VERSION}"
           echo "recorded-at=${RECORDED_AT}"
           echo "http-status=${HTTP_CODE}"
+          echo "console-url=${CONSOLE_LINK}"
         } >> "$GITHUB_OUTPUT"
 
         echo "Recorded catalogDigest=${CATALOG_DIGEST}"
+        echo "Console: ${CONSOLE_LINK}"
+        echo "::notice title=Console catalog evidence::${CONSOLE_LINK}"
+
+        if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+          {
+            echo "## Nexus tool catalog"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Source ID | \`${EFFECTIVE_SOURCE}\` |"
+            echo "| Source version | \`${EFFECTIVE_VERSION}\` |"
+            echo "| Catalog digest | \`${CATALOG_DIGEST}\` |"
+            echo "| Tenant | \`${TENANT_ID}\` |"
+            echo "| Tools | ${TOOL_COUNT} |"
+            echo
+            echo "**[Open in Console — catalog evidence & schema checks](${CONSOLE_LINK})**"
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
