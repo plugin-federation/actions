@@ -4,3 +4,9 @@
 /mcp-tools-list-validate/ @plugin-federation/maintainers
 /nexus-oidc-exchange/ @plugin-federation/maintainers
 /nexus-record-tool-catalog/ @plugin-federation/maintainers
+/mcp-tool-fingerprint/ @plugin-federation/maintainers
+/nexus-list-tool-judges/ @plugin-federation/maintainers
+/nexus-tool-analysis-lookup/ @plugin-federation/maintainers
+/mcp-tool-judge/ @plugin-federation/maintainers
+/nexus-record-tool-analyses/ @plugin-federation/maintainers
+/mcp-tool-judge-pipeline/ @plugin-federation/maintainers

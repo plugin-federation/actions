@@ -1,0 +1,82 @@
+name: "MCP tool LLM judge"
+description: >-
+  Run LLM-as-judge for pending tools using judge system prompts from Nexus and
+  provider API keys from CI secrets.
+author: "Plugin Federation"
+branding:
+  icon: cpu
+  color: purple
+
+inputs:
+  judges-file:
+    description: "JSON from nexus-list-tool-judges"
+    required: true
+  lookup-file:
+    description: "JSON from nexus-tool-analysis-lookup for one judge"
+    required: true
+  fingerprints-file:
+    description: "JSON from mcp-tool-fingerprint (includes detailed tools)"
+    required: true
+  catalog-digest:
+    description: "Optional catalog digest to attach to results"
+    required: false
+    default: ""
+  source-id:
+    description: "Optional source id for prompt templates"
+    required: false
+    default: ""
+  output-file:
+    required: false
+    default: "tool-analysis-results.json"
+  # Provider secrets should be mapped into the job env by the caller.
+
+outputs:
+  output-file:
+    value: ${{ steps.run.outputs.output-file }}
+  item-count:
+    value: ${{ steps.run.outputs.item-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run LLM judge on pending tools
+      id: run
+      shell: bash
+      env:
+        INPUT_JUDGES_FILE: ${{ inputs.judges-file }}
+        INPUT_LOOKUP_FILE: ${{ inputs.lookup-file }}
+        INPUT_FINGERPRINTS_FILE: ${{ inputs.fingerprints-file }}
+        INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
+        INPUT_CATALOG_DIGEST: ${{ inputs.catalog-digest }}
+        INPUT_SOURCE_ID: ${{ inputs.source-id }}
+      run: |
+        set -euo pipefail
+        PENDING="$(jq '.pending | length' "${INPUT_LOOKUP_FILE}")"
+        if [[ "$PENDING" == "0" ]]; then
+          JUDGE_ID="$(jq -r '.judgeId' "${INPUT_LOOKUP_FILE}")"
+          JUDGE_VERSION="$(jq -r --arg j "$JUDGE_ID" \
+            '.items[]? | select(.judgeId==$j) | .version // empty' "${INPUT_JUDGES_FILE}" \
+            || true)"
+          if [[ -z "$JUDGE_VERSION" ]]; then
+            JUDGE_VERSION="$(jq -r '.judgeVersion // empty' "${INPUT_LOOKUP_FILE}")"
+          fi
+          jq -n \
+            --arg judgeId "$(jq -r '.judgeId' "${INPUT_LOOKUP_FILE}")" \
+            --arg judgeVersion "$JUDGE_VERSION" \
+            --arg catalogDigest "${INPUT_CATALOG_DIGEST}" \
+            '{
+              judgeId: $judgeId,
+              items: []
+            }
+            + (if $judgeVersion != "" then {judgeVersion: $judgeVersion} else {} end)
+            + (if $catalogDigest != "" then {catalogDigest: $catalogDigest} else {} end)' \
+            > "${INPUT_OUTPUT_FILE}"
+          echo "item-count=0" >> "$GITHUB_OUTPUT"
+          echo "output-file=${INPUT_OUTPUT_FILE}" >> "$GITHUB_OUTPUT"
+          echo "No pending tools for this judge"
+          exit 0
+        fi
+        node "${{ github.action_path }}/run-judge.mjs"
+        COUNT="$(jq '.items | length' "${INPUT_OUTPUT_FILE}")"
+        echo "item-count=${COUNT}" >> "$GITHUB_OUTPUT"
+        echo "output-file=${INPUT_OUTPUT_FILE}" >> "$GITHUB_OUTPUT"

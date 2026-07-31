@@ -1,0 +1,73 @@
+name: "Nexus record tool analyses"
+description: Record batch LLM-as-judge results for a source under a judge pack.
+author: "Plugin Federation"
+branding:
+  icon: upload
+  color: purple
+
+inputs:
+  nexus-url:
+    required: false
+    default: "https://api.plugin-federation.com"
+  tenant-id:
+    required: true
+  source-id:
+    required: true
+  access-token:
+    required: true
+  results-file:
+    description: >-
+      JSON body for CreateToolAnalysesRequest or { items: [...] } with
+      judgeId/judgeVersion/catalogDigest at top level.
+    required: true
+
+outputs:
+  item-count:
+    value: ${{ steps.run.outputs.item-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Record analyses
+      id: run
+      shell: bash
+      env:
+        NEXUS_URL: ${{ inputs.nexus-url }}
+        TENANT_ID: ${{ inputs.tenant-id }}
+        SOURCE_ID: ${{ inputs.source-id }}
+        ACCESS_TOKEN: ${{ inputs.access-token }}
+        RESULTS_FILE: ${{ inputs.results-file }}
+      run: |
+        set -euo pipefail
+        echo "::add-mask::${ACCESS_TOKEN}"
+        if [[ -z "${NEXUS_URL:-}" ]]; then
+          NEXUS_URL="https://api.plugin-federation.com"
+        fi
+        NEXUS_URL="${NEXUS_URL%/}"
+        if [[ ! -f "$RESULTS_FILE" ]]; then
+          echo "::error::results-file not found: ${RESULTS_FILE}"
+          exit 1
+        fi
+        # If empty items, skip POST (nothing to record).
+        ITEMS="$(jq '.items | length // 0' "$RESULTS_FILE")"
+        if [[ "$ITEMS" == "0" ]]; then
+          echo "item-count=0" >> "$GITHUB_OUTPUT"
+          echo "No analysis items to record"
+          exit 0
+        fi
+        HTTP_CODE="$(curl -sS -o "${RUNNER_TEMP}/record-analyses-response.json" -w "%{http_code}" \
+          -X POST "${NEXUS_URL}/api/v1/tenants/${TENANT_ID}/tool-sources/${SOURCE_ID}/tool-analyses" \
+          -H "authorization: Bearer ${ACCESS_TOKEN}" \
+          -H "content-type: application/json" \
+          -H "idempotency-key: analyses-${GITHUB_SHA:-local}-${GITHUB_RUN_ID:-0}" \
+          -H "x-request-id: gha-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-1}" \
+          --data-binary @"${RESULTS_FILE}")"
+        echo "Record analyses status: ${HTTP_CODE}"
+        cat "${RUNNER_TEMP}/record-analyses-response.json" || true
+        echo
+        if [[ "$HTTP_CODE" != "201" && "$HTTP_CODE" != "200" ]]; then
+          echo "::error::record tool analyses failed"
+          exit 1
+        fi
+        COUNT="$(jq '.items | length' "${RUNNER_TEMP}/record-analyses-response.json")"
+        echo "item-count=${COUNT}" >> "$GITHUB_OUTPUT"

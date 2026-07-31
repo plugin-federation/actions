@@ -1,0 +1,178 @@
+name: "MCP tool judge pipeline"
+description: >-
+  End-to-end CI LLM-as-judge: load judges from Nexus, fingerprint tools,
+  lookup pending per judge, run model in CI, record analyses. Requires
+  permissions.id-token: write and provider API keys in the job env.
+author: "Plugin Federation"
+branding:
+  icon: check-circle
+  color: purple
+
+inputs:
+  nexus-url:
+    required: false
+    default: "https://api.plugin-federation.com"
+  tenant-id:
+    required: true
+  source-id:
+    required: true
+  access-token:
+    description: "Nexus token from nexus-oidc-exchange"
+    required: true
+  tools-list-file:
+    required: true
+  catalog-digest:
+    required: false
+    default: ""
+  force-rerun:
+    required: false
+    default: "false"
+  fail-on-judge-fail:
+    description: "If true, fail the step when any tool outcome is fail"
+    required: false
+    default: "true"
+
+outputs:
+  fingerprints-file:
+    value: ${{ steps.fp.outputs.output-file }}
+  judges-file:
+    value: ${{ steps.judges.outputs.output-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Fingerprint tools
+      id: fp
+      shell: bash
+      env:
+        INPUT_TOOLS_LIST_FILE: ${{ inputs.tools-list-file }}
+        INPUT_OUTPUT_FILE: ${{ runner.temp }}/tool-fingerprints.json
+      run: |
+        set -euo pipefail
+        node "${{ github.action_path }}/../mcp-tool-fingerprint/fingerprint.mjs"
+        COUNT="$(jq '.tools | length' "${INPUT_OUTPUT_FILE}")"
+        echo "output-file=${INPUT_OUTPUT_FILE}" >> "$GITHUB_OUTPUT"
+        echo "tool-count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+    - name: List judges from Nexus
+      id: judges
+      shell: bash
+      env:
+        NEXUS_URL: ${{ inputs.nexus-url }}
+        TENANT_ID: ${{ inputs.tenant-id }}
+        ACCESS_TOKEN: ${{ inputs.access-token }}
+        OUTPUT_FILE: ${{ runner.temp }}/tool-judges.json
+      run: |
+        set -euo pipefail
+        echo "::add-mask::${ACCESS_TOKEN}"
+        if [[ -z "${NEXUS_URL:-}" ]]; then
+          NEXUS_URL="https://api.plugin-federation.com"
+        fi
+        NEXUS_URL="${NEXUS_URL%/}"
+        HTTP_CODE="$(curl -sS -o "${RUNNER_TEMP}/judges-response.json" -w "%{http_code}" \
+          -H "authorization: Bearer ${ACCESS_TOKEN}" \
+          -H "accept: application/json" \
+          "${NEXUS_URL}/api/v1/tenants/${TENANT_ID}/tool-judges?enabledOnly=true")"
+        if [[ "$HTTP_CODE" != "200" ]]; then
+          echo "::error::list tool judges failed (HTTP ${HTTP_CODE})"
+          cat "${RUNNER_TEMP}/judges-response.json" || true
+          exit 1
+        fi
+        jq '.' "${RUNNER_TEMP}/judges-response.json" > "${OUTPUT_FILE}"
+        COUNT="$(jq '.items | length' "${OUTPUT_FILE}")"
+        echo "output-file=${OUTPUT_FILE}" >> "$GITHUB_OUTPUT"
+        echo "judge-count=${COUNT}" >> "$GITHUB_OUTPUT"
+        echo "Fetched ${COUNT} enabled judges"
+
+    - name: Run all judges
+      shell: bash
+      env:
+        NEXUS_URL: ${{ inputs.nexus-url }}
+        TENANT_ID: ${{ inputs.tenant-id }}
+        SOURCE_ID: ${{ inputs.source-id }}
+        ACCESS_TOKEN: ${{ inputs.access-token }}
+        CATALOG_DIGEST: ${{ inputs.catalog-digest }}
+        FORCE_RERUN: ${{ inputs.force-rerun }}
+        FAIL_ON_FAIL: ${{ inputs.fail-on-judge-fail }}
+        FP_FILE: ${{ steps.fp.outputs.output-file }}
+        JUDGES_FILE: ${{ steps.judges.outputs.output-file }}
+      run: |
+        set -euo pipefail
+        echo "::add-mask::${ACCESS_TOKEN}"
+        if [[ -z "${NEXUS_URL:-}" ]]; then
+          NEXUS_URL="https://api.plugin-federation.com"
+        fi
+        NEXUS_URL="${NEXUS_URL%/}"
+        COUNT="$(jq '.items | length' "$JUDGES_FILE")"
+        if [[ "$COUNT" == "0" ]]; then
+          echo "::warning::No enabled tool judges on tenant — configure via POST /tool-judges"
+          exit 0
+        fi
+        FAIL_COUNT=0
+        for i in $(seq 0 $((COUNT - 1))); do
+          JUDGE_ID="$(jq -r --argjson i "$i" '.items[$i].judgeId' "$JUDGES_FILE")"
+          JUDGE_VERSION="$(jq -r --argjson i "$i" '.items[$i].version' "$JUDGES_FILE")"
+          echo "::group::Judge ${JUDGE_ID}@${JUDGE_VERSION}"
+
+          LOOKUP_FILE="${RUNNER_TEMP}/lookup-${JUDGE_ID}.json"
+          RESULTS_FILE="${RUNNER_TEMP}/results-${JUDGE_ID}.json"
+          FORCE_JSON=false
+          [[ "$FORCE_RERUN" == "true" ]] && FORCE_JSON=true
+
+          jq -n \
+            --arg judgeId "$JUDGE_ID" \
+            --arg judgeVersion "$JUDGE_VERSION" \
+            --argjson forceRerun "$FORCE_JSON" \
+            --slurpfile fp "$FP_FILE" \
+            '{
+              judgeId: $judgeId,
+              judgeVersion: $judgeVersion,
+              forceRerun: $forceRerun,
+              tools: $fp[0].tools
+            }' > "${RUNNER_TEMP}/lookup-req.json"
+
+          CODE="$(curl -sS -o "$LOOKUP_FILE" -w "%{http_code}" \
+            -X POST "${NEXUS_URL}/api/v1/tenants/${TENANT_ID}/tool-sources/${SOURCE_ID}/tool-analyses/lookup" \
+            -H "authorization: Bearer ${ACCESS_TOKEN}" \
+            -H "content-type: application/json" \
+            --data-binary @"${RUNNER_TEMP}/lookup-req.json")"
+          if [[ "$CODE" != "200" ]]; then
+            echo "::error::lookup failed for ${JUDGE_ID} HTTP ${CODE}"
+            cat "$LOOKUP_FILE" || true
+            exit 1
+          fi
+          echo "pending=$(jq '.pending|length' "$LOOKUP_FILE") analyzed=$(jq '.analyzed|length' "$LOOKUP_FILE")"
+
+          INPUT_JUDGES_FILE="$JUDGES_FILE" \
+          INPUT_LOOKUP_FILE="$LOOKUP_FILE" \
+          INPUT_FINGERPRINTS_FILE="$FP_FILE" \
+          INPUT_OUTPUT_FILE="$RESULTS_FILE" \
+          INPUT_CATALOG_DIGEST="$CATALOG_DIGEST" \
+          INPUT_SOURCE_ID="$SOURCE_ID" \
+          node "${{ github.action_path }}/../mcp-tool-judge/run-judge.mjs"
+
+          ITEMS="$(jq '.items|length' "$RESULTS_FILE")"
+          if [[ "$ITEMS" != "0" ]]; then
+            CODE="$(curl -sS -o "${RUNNER_TEMP}/record-out.json" -w "%{http_code}" \
+              -X POST "${NEXUS_URL}/api/v1/tenants/${TENANT_ID}/tool-sources/${SOURCE_ID}/tool-analyses" \
+              -H "authorization: Bearer ${ACCESS_TOKEN}" \
+              -H "content-type: application/json" \
+              -H "idempotency-key: analyses-${JUDGE_ID}-${GITHUB_SHA:-x}-${GITHUB_RUN_ID:-0}" \
+              -H "x-request-id: gha-${GITHUB_RUN_ID:-0}-${i}" \
+              --data-binary @"$RESULTS_FILE")"
+            if [[ "$CODE" != "201" && "$CODE" != "200" ]]; then
+              echo "::error::record failed for ${JUDGE_ID} HTTP ${CODE}"
+              cat "${RUNNER_TEMP}/record-out.json" || true
+              exit 1
+            fi
+          fi
+
+          FAILS="$(jq '[.items[] | select(.outcome=="fail")] | length' "$RESULTS_FILE")"
+          FAIL_COUNT=$((FAIL_COUNT + FAILS))
+          echo "::endgroup::"
+        done
+
+        if [[ "$FAIL_ON_FAIL" == "true" && "$FAIL_COUNT" -gt 0 ]]; then
+          echo "::error::${FAIL_COUNT} tool(s) failed LLM judge"
+          exit 1
+        fi

@@ -1,0 +1,99 @@
+name: "Nexus tool analysis lookup"
+description: >-
+  Ask Nexus which tools still need LLM-as-judge for a given judge pack
+  (by tool fingerprint).
+author: "Plugin Federation"
+branding:
+  icon: search
+  color: purple
+
+inputs:
+  nexus-url:
+    required: false
+    default: "https://api.plugin-federation.com"
+  tenant-id:
+    required: true
+  source-id:
+    required: true
+  access-token:
+    required: true
+  judge-id:
+    required: true
+  judge-version:
+    required: false
+    default: ""
+  force-rerun:
+    required: false
+    default: "false"
+  fingerprints-file:
+    description: "Output of mcp-tool-fingerprint (has .tools[])"
+    required: true
+  output-file:
+    required: false
+    default: "tool-analysis-lookup.json"
+
+outputs:
+  output-file:
+    value: ${{ steps.run.outputs.output-file }}
+  pending-count:
+    value: ${{ steps.run.outputs.pending-count }}
+  analyzed-count:
+    value: ${{ steps.run.outputs.analyzed-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Lookup pending tools
+      id: run
+      shell: bash
+      env:
+        NEXUS_URL: ${{ inputs.nexus-url }}
+        TENANT_ID: ${{ inputs.tenant-id }}
+        SOURCE_ID: ${{ inputs.source-id }}
+        ACCESS_TOKEN: ${{ inputs.access-token }}
+        JUDGE_ID: ${{ inputs.judge-id }}
+        JUDGE_VERSION: ${{ inputs.judge-version }}
+        FORCE_RERUN: ${{ inputs.force-rerun }}
+        FINGERPRINTS_FILE: ${{ inputs.fingerprints-file }}
+        OUTPUT_FILE: ${{ inputs.output-file }}
+      run: |
+        set -euo pipefail
+        echo "::add-mask::${ACCESS_TOKEN}"
+        if [[ -z "${NEXUS_URL:-}" ]]; then
+          NEXUS_URL="https://api.plugin-federation.com"
+        fi
+        NEXUS_URL="${NEXUS_URL%/}"
+        FORCE_JSON=false
+        if [[ "${FORCE_RERUN}" == "true" ]]; then
+          FORCE_JSON=true
+        fi
+        jq -n \
+          --arg judgeId "$JUDGE_ID" \
+          --arg judgeVersion "$JUDGE_VERSION" \
+          --argjson forceRerun "$FORCE_JSON" \
+          --slurpfile fp "$FINGERPRINTS_FILE" \
+          '{
+            judgeId: $judgeId,
+            forceRerun: $forceRerun,
+            tools: $fp[0].tools
+          }
+          + (if $judgeVersion != "" then {judgeVersion: $judgeVersion} else {} end)' \
+          > "${RUNNER_TEMP}/lookup-request.json"
+
+        HTTP_CODE="$(curl -sS -o "${RUNNER_TEMP}/lookup-response.json" -w "%{http_code}" \
+          -X POST "${NEXUS_URL}/api/v1/tenants/${TENANT_ID}/tool-sources/${SOURCE_ID}/tool-analyses/lookup" \
+          -H "authorization: Bearer ${ACCESS_TOKEN}" \
+          -H "content-type: application/json" \
+          --data-binary @"${RUNNER_TEMP}/lookup-request.json")"
+        if [[ "$HTTP_CODE" != "200" ]]; then
+          echo "::error::tool analysis lookup failed (HTTP ${HTTP_CODE})"
+          cat "${RUNNER_TEMP}/lookup-response.json" || true
+          exit 1
+        fi
+        jq '.' "${RUNNER_TEMP}/lookup-response.json" > "${OUTPUT_FILE}"
+        PENDING="$(jq '.pending | length' "${OUTPUT_FILE}")"
+        ANALYZED="$(jq '.analyzed | length' "${OUTPUT_FILE}")"
+        echo "pending-count=${PENDING}" >> "$GITHUB_OUTPUT"
+        echo "analyzed-count=${ANALYZED}" >> "$GITHUB_OUTPUT"
+        echo "output-file=${OUTPUT_FILE}" >> "$GITHUB_OUTPUT"
+        echo "Lookup judge=${JUDGE_ID}: pending=${PENDING} analyzed=${ANALYZED}"
