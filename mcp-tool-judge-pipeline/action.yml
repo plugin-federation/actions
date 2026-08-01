@@ -165,6 +165,7 @@ runs:
         SOURCE_ID: ${{ inputs.source-id }}
         ACCESS_TOKEN: ${{ inputs.access-token }}
         CATALOG_DIGEST: ${{ steps.digest.outputs.catalog-digest }}
+        CATALOG_CONSOLE_URL: ${{ steps.catalog.outputs.console-url }}
         FORCE_RERUN: ${{ inputs.force-rerun }}
         FAIL_ON_FAIL: ${{ inputs.fail-on-judge-fail }}
         FP_FILE: ${{ steps.fp.outputs.output-file }}
@@ -181,7 +182,27 @@ runs:
           echo "::warning::No enabled tool judges on tenant — catalog recorded; configure judges via Console or POST /tool-judges"
           exit 0
         fi
+
+        SUMMARY_ROWS="${RUNNER_TEMP}/judge-summary-rows.tsv"
+        : > "$SUMMARY_ROWS"
         FAIL_COUNT=0
+        FAIL_NAMES=()
+
+        report_row() {
+          # args: source judge_id name outcome score
+          local source="$1" judge_id="$2" name="$3" outcome="$4" score="${5:-}"
+          local score_label="${score:-—}"
+          printf '%s\t%s\t%s\t%s\t%s\n' "$judge_id" "$name" "$score_label" "$outcome" "$source" >> "$SUMMARY_ROWS"
+          echo "  ${name}: score=${score_label} outcome=${outcome} (${source})"
+          if [[ "$outcome" == "fail" || "$outcome" == "error" ]]; then
+            echo "::warning title=Judge ${judge_id} · ${name}::score=${score_label} outcome=${outcome} (${source})"
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+            FAIL_NAMES+=("${name}[${judge_id}]=${score_label}/${outcome}")
+          else
+            echo "::notice title=Judge ${judge_id} · ${name}::score=${score_label} outcome=${outcome} (${source})"
+          fi
+        }
+
         for i in $(seq 0 $((COUNT - 1))); do
           JUDGE_ID="$(jq -r --argjson i "$i" '.items[$i].judgeId' "$JUDGES_FILE")"
           JUDGE_VERSION="$(jq -r --argjson i "$i" '.items[$i].version' "$JUDGES_FILE")"
@@ -215,7 +236,19 @@ runs:
             cat "$LOOKUP_FILE" || true
             exit 1
           fi
-          echo "pending=$(jq '.pending|length' "$LOOKUP_FILE") analyzed=$(jq '.analyzed|length' "$LOOKUP_FILE")"
+
+          PENDING_N="$(jq '.pending|length' "$LOOKUP_FILE")"
+          ANALYZED_N="$(jq '.analyzed|length' "$LOOKUP_FILE")"
+          echo "pending=${PENDING_N} analyzed=${ANALYZED_N}"
+
+          # Always surface cached assessments (even when nothing is pending).
+          if [[ "$ANALYZED_N" != "0" ]]; then
+            echo "Cached assessments (from Nexus):"
+            while IFS=$'\t' read -r name outcome score; do
+              [[ -z "$name" ]] && continue
+              report_row "cache" "$JUDGE_ID" "$name" "$outcome" "$score"
+            done < <(jq -r '.analyzed[]? | [.name, .outcome, (if .score == null then "" else (.score|tostring) end)] | @tsv' "$LOOKUP_FILE")
+          fi
 
           INPUT_JUDGES_FILE="$JUDGES_FILE" \
           INPUT_LOOKUP_FILE="$LOOKUP_FILE" \
@@ -239,21 +272,59 @@ runs:
               cat "${RUNNER_TEMP}/record-out.json" || true
               exit 1
             fi
-            echo "Recorded ${ITEMS} assessment(s) for ${JUDGE_ID}"
+            echo "Recorded ${ITEMS} new assessment(s) for ${JUDGE_ID} in Nexus"
+            echo "New assessments (this run):"
+            while IFS=$'\t' read -r name outcome score; do
+              [[ -z "$name" ]] && continue
+              report_row "new" "$JUDGE_ID" "$name" "$outcome" "$score"
+            done < <(jq -r '.items[]? | [.name, .outcome, (if .score == null then "" else (.score|tostring) end)] | @tsv' "$RESULTS_FILE")
+          elif [[ "$PENDING_N" != "0" ]]; then
+            echo "::warning::pending=${PENDING_N} but no analysis items were produced"
+          else
+            echo "No pending tools — used Nexus cache only (nothing new to POST)"
           fi
 
-          SCORES="$(jq -r '[.items[] | select(.score != null) | "\(.name)=\(.score) (\(.outcome))"] | join(", ")' "$RESULTS_FILE" 2>/dev/null || true)"
-          if [[ -n "$SCORES" ]]; then
-            echo "scores: $SCORES"
-          fi
-          # Also surface cached analyzed outcomes that already failed (when force-rerun is false).
-          CACHED_FAILS="$(jq '[.analyzed[]? | select(.outcome=="fail")] | length' "$LOOKUP_FILE" 2>/dev/null || echo 0)"
-          NEW_FAILS="$(jq '[.items[] | select(.outcome=="fail" or .outcome=="error")] | length' "$RESULTS_FILE")"
-          FAIL_COUNT=$((FAIL_COUNT + NEW_FAILS + CACHED_FAILS))
           echo "::endgroup::"
         done
 
+        # Job log + step summary table
+        echo
+        echo "======== Judge results ========"
+        if [[ -s "$SUMMARY_ROWS" ]]; then
+          printf '%-20s %-24s %6s %-8s %s\n' "JUDGE" "TOOL" "SCORE" "OUTCOME" "SOURCE"
+          while IFS=$'\t' read -r judge name score outcome source; do
+            printf '%-20s %-24s %6s %-8s %s\n' "$judge" "$name" "$score" "$outcome" "$source"
+          done < "$SUMMARY_ROWS"
+        else
+          echo "(no assessment rows)"
+        fi
+        echo "================================"
+
+        if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+          {
+            echo "## LLM-as-judge results"
+            echo
+            if [[ -n "${CATALOG_DIGEST:-}" ]]; then
+              echo "- **Catalog digest:** \`${CATALOG_DIGEST}\`"
+            fi
+            if [[ -n "${CATALOG_CONSOLE_URL:-}" ]]; then
+              echo "- **Console:** [catalog evidence](${CATALOG_CONSOLE_URL})"
+            fi
+            echo
+            echo "| Judge | Tool | Score | Outcome | Source |"
+            echo "| --- | --- | ---: | --- | --- |"
+            if [[ -s "$SUMMARY_ROWS" ]]; then
+              while IFS=$'\t' read -r judge name score outcome source; do
+                echo "| \`${judge}\` | \`${name}\` | ${score} | **${outcome}** | ${source} |"
+              done < "$SUMMARY_ROWS"
+            else
+              echo "| — | — | — | — | — |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
         if [[ "$FAIL_ON_FAIL" == "true" && "$FAIL_COUNT" -gt 0 ]]; then
-          echo "::error::${FAIL_COUNT} tool(s) failed LLM judge (score below passThreshold or error)"
+          DETAIL="$(IFS=', '; echo "${FAIL_NAMES[*]}")"
+          echo "::error::${FAIL_COUNT} tool(s) failed LLM judge (score below passThreshold or error): ${DETAIL}"
           exit 1
         fi
