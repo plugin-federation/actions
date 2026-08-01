@@ -53,8 +53,8 @@ inputs:
     default: "false"
   fail-on-judge-fail:
     description: >-
-      If true, fail the step when any tool outcome is fail or error
-      (outcome is derived from score vs passThreshold).
+      If true, fail the step when any tool outcome is fail or error.
+      warn outcomes are reported but do not fail the job by default.
     required: false
     default: "true"
 
@@ -198,6 +198,8 @@ runs:
             echo "::warning title=Judge ${judge_id} · ${name}::score=${score_label} outcome=${outcome} (${source})"
             FAIL_COUNT=$((FAIL_COUNT + 1))
             FAIL_NAMES+=("${name}[${judge_id}]=${score_label}/${outcome}")
+          elif [[ "$outcome" == "warn" ]]; then
+            echo "::warning title=Judge ${judge_id} · ${name}::score=${score_label} outcome=warn (${source}) — non-critical"
           else
             echo "::notice title=Judge ${judge_id} · ${name}::score=${score_label} outcome=${outcome} (${source})"
           fi
@@ -207,7 +209,12 @@ runs:
           JUDGE_ID="$(jq -r --argjson i "$i" '.items[$i].judgeId' "$JUDGES_FILE")"
           JUDGE_VERSION="$(jq -r --argjson i "$i" '.items[$i].version' "$JUDGES_FILE")"
           THRESHOLD="$(jq -r --argjson i "$i" '.items[$i].passThreshold // 70' "$JUDGES_FILE")"
-          echo "::group::Judge ${JUDGE_ID}@${JUDGE_VERSION} (passThreshold=${THRESHOLD})"
+          WARN_T="$(jq -r --argjson i "$i" '.items[$i].warnThreshold // empty' "$JUDGES_FILE")"
+          if [[ -n "$WARN_T" ]]; then
+            echo "::group::Judge ${JUDGE_ID}@${JUDGE_VERSION} (passThreshold=${THRESHOLD}, warnThreshold=${WARN_T})"
+          else
+            echo "::group::Judge ${JUDGE_ID}@${JUDGE_VERSION} (passThreshold=${THRESHOLD})"
+          fi
 
           LOOKUP_FILE="${RUNNER_TEMP}/lookup-${JUDGE_ID}.json"
           RESULTS_FILE="${RUNNER_TEMP}/results-${JUDGE_ID}.json"
