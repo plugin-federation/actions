@@ -1,8 +1,11 @@
 # MCP tool judge pipeline
 
-Loads **judge definitions from Nexus** (system prompts), fingerprints tools,
-looks up pending tools per judge, runs the **LLM in GitHub Actions** with CI
-secrets, and records analyses back to Nexus.
+Loads **judge definitions from Nexus** (system prompts + **passThreshold**),
+fingerprints tools, looks up pending tools per judge, runs the **LLM in
+GitHub Actions** with CI secrets, and records analyses back to Nexus.
+
+Judges return an **overallScore** from **0–100**. CI derives
+`outcome=pass` when `score >= passThreshold` (default **70**), else `fail`.
 
 ## Prerequisites
 

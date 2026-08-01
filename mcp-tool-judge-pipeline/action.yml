@@ -3,6 +3,7 @@ description: >-
   End-to-end CI LLM-as-judge: load judges from Nexus, fingerprint tools,
   lookup pending per judge, run model in CI, record analyses. Requires
   permissions.id-token: write and provider API keys in the job env.
+  Scores are 0–100; pass/fail is score >= judge passThreshold.
 author: "Plugin Federation"
 branding:
   icon: check-circle
@@ -28,7 +29,9 @@ inputs:
     required: false
     default: "false"
   fail-on-judge-fail:
-    description: "If true, fail the step when any tool outcome is fail"
+    description: >-
+      If true, fail the step when any tool outcome is fail or error
+      (outcome is derived from score vs passThreshold).
     required: false
     default: "true"
 
@@ -112,7 +115,8 @@ runs:
         for i in $(seq 0 $((COUNT - 1))); do
           JUDGE_ID="$(jq -r --argjson i "$i" '.items[$i].judgeId' "$JUDGES_FILE")"
           JUDGE_VERSION="$(jq -r --argjson i "$i" '.items[$i].version' "$JUDGES_FILE")"
-          echo "::group::Judge ${JUDGE_ID}@${JUDGE_VERSION}"
+          THRESHOLD="$(jq -r --argjson i "$i" '.items[$i].passThreshold // 70' "$JUDGES_FILE")"
+          echo "::group::Judge ${JUDGE_ID}@${JUDGE_VERSION} (passThreshold=${THRESHOLD})"
 
           LOOKUP_FILE="${RUNNER_TEMP}/lookup-${JUDGE_ID}.json"
           RESULTS_FILE="${RUNNER_TEMP}/results-${JUDGE_ID}.json"
@@ -167,12 +171,16 @@ runs:
             fi
           fi
 
-          FAILS="$(jq '[.items[] | select(.outcome=="fail")] | length' "$RESULTS_FILE")"
+          SCORES="$(jq -r '[.items[] | select(.score != null) | "\(.name)=\(.score) (\(.outcome))"] | join(", ")' "$RESULTS_FILE" 2>/dev/null || true)"
+          if [[ -n "$SCORES" ]]; then
+            echo "scores: $SCORES"
+          fi
+          FAILS="$(jq '[.items[] | select(.outcome=="fail" or .outcome=="error")] | length' "$RESULTS_FILE")"
           FAIL_COUNT=$((FAIL_COUNT + FAILS))
           echo "::endgroup::"
         done
 
         if [[ "$FAIL_ON_FAIL" == "true" && "$FAIL_COUNT" -gt 0 ]]; then
-          echo "::error::${FAIL_COUNT} tool(s) failed LLM judge"
+          echo "::error::${FAIL_COUNT} tool(s) failed LLM judge (score below passThreshold or error)"
           exit 1
         fi
