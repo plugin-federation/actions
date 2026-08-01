@@ -1,9 +1,10 @@
 name: "MCP tool judge pipeline"
 description: >-
-  End-to-end CI LLM-as-judge: load judges from Nexus, fingerprint tools,
-  lookup pending per judge, run model in CI, record analyses. Requires
-  permissions.id-token: write and provider API keys in the job env.
-  Scores are 0–100; pass/fail is score >= judge passThreshold.
+  End-to-end Nexus dogfood for an MCP tools/list: record the tool catalog,
+  load judges from Nexus, fingerprint tools, run LLM-as-judge in CI for
+  pending tools only, and record assessments. Scores are 0–100; pass/fail
+  is score >= judge passThreshold. Requires id-token: write (for OIDC
+  upstream) and provider API keys in the job env.
 author: "Plugin Federation"
 branding:
   icon: check-circle
@@ -11,8 +12,17 @@ branding:
 
 inputs:
   nexus-url:
+    description: >-
+      Nexus base URL. Defaults to production. Use
+      https://api.nonprod.plugin-federation.com for nonprod.
     required: false
     default: "https://api.plugin-federation.com"
+  console-url:
+    description: >-
+      Console base URL for catalog deep links. Empty derives from nexus-url
+      (api.* → console.*).
+    required: false
+    default: ""
   tenant-id:
     required: true
   source-id:
@@ -22,7 +32,20 @@ inputs:
     required: true
   tools-list-file:
     required: true
+  source-version:
+    description: "Catalog sourceVersion (default: github.sha)"
+    required: false
+    default: ""
+  record-catalog:
+    description: >-
+      When true (default), POST the tools/list catalog to Nexus before judging
+      and attach the returned catalogDigest to analyses.
+    required: false
+    default: "true"
   catalog-digest:
+    description: >-
+      Optional catalog digest override. Used when record-catalog is false, or
+      as a fallback if the record step is skipped.
     required: false
     default: ""
   force-rerun:
@@ -40,10 +63,57 @@ outputs:
     value: ${{ steps.fp.outputs.output-file }}
   judges-file:
     value: ${{ steps.judges.outputs.output-file }}
+  catalog-digest:
+    description: "Content-addressed catalog digest (from record step or input)"
+    value: ${{ steps.digest.outputs.catalog-digest }}
+  catalog-console-url:
+    description: "Console deep link for catalog evidence when catalog was recorded"
+    value: ${{ steps.catalog.outputs.console-url }}
+  source-version:
+    value: ${{ steps.catalog.outputs.source-version }}
 
 runs:
   using: composite
   steps:
+    # Nested composite: use the published same-repo action (relative paths resolve
+    # against the *caller* repo, not this actions monorepo).
+    - name: Record tool catalog in Nexus
+      id: catalog
+      if: ${{ inputs.record-catalog == 'true' }}
+      uses: plugin-federation/actions/nexus-record-tool-catalog@main
+      with:
+        nexus-url: ${{ inputs.nexus-url }}
+        console-url: ${{ inputs.console-url }}
+        tenant-id: ${{ inputs.tenant-id }}
+        source-id: ${{ inputs.source-id }}
+        access-token: ${{ inputs.access-token }}
+        tools-list-file: ${{ inputs.tools-list-file }}
+        source-version: ${{ inputs.source-version }}
+
+    - name: Resolve catalog digest
+      id: digest
+      shell: bash
+      env:
+        RECORDED: ${{ steps.catalog.outputs.catalog-digest }}
+        OVERRIDE: ${{ inputs.catalog-digest }}
+        RECORD_CATALOG: ${{ inputs.record-catalog }}
+      run: |
+        set -euo pipefail
+        DIGEST="${RECORDED:-}"
+        if [[ -z "$DIGEST" ]]; then
+          DIGEST="${OVERRIDE:-}"
+        fi
+        if [[ "$RECORD_CATALOG" == "true" && -z "$DIGEST" ]]; then
+          echo "::error::record-catalog=true but no catalogDigest was produced"
+          exit 1
+        fi
+        echo "catalog-digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+        if [[ -n "$DIGEST" ]]; then
+          echo "Using catalogDigest=${DIGEST}"
+        else
+          echo "No catalogDigest (analyses will omit it)"
+        fi
+
     - name: Fingerprint tools
       id: fp
       shell: bash
@@ -87,14 +157,14 @@ runs:
         echo "judge-count=${COUNT}" >> "$GITHUB_OUTPUT"
         echo "Fetched ${COUNT} enabled judges"
 
-    - name: Run all judges
+    - name: Run judges and record assessments
       shell: bash
       env:
         NEXUS_URL: ${{ inputs.nexus-url }}
         TENANT_ID: ${{ inputs.tenant-id }}
         SOURCE_ID: ${{ inputs.source-id }}
         ACCESS_TOKEN: ${{ inputs.access-token }}
-        CATALOG_DIGEST: ${{ inputs.catalog-digest }}
+        CATALOG_DIGEST: ${{ steps.digest.outputs.catalog-digest }}
         FORCE_RERUN: ${{ inputs.force-rerun }}
         FAIL_ON_FAIL: ${{ inputs.fail-on-judge-fail }}
         FP_FILE: ${{ steps.fp.outputs.output-file }}
@@ -108,7 +178,7 @@ runs:
         NEXUS_URL="${NEXUS_URL%/}"
         COUNT="$(jq '.items | length' "$JUDGES_FILE")"
         if [[ "$COUNT" == "0" ]]; then
-          echo "::warning::No enabled tool judges on tenant — configure via POST /tool-judges"
+          echo "::warning::No enabled tool judges on tenant — catalog recorded; configure judges via Console or POST /tool-judges"
           exit 0
         fi
         FAIL_COUNT=0
@@ -165,18 +235,21 @@ runs:
               -H "x-request-id: gha-${GITHUB_RUN_ID:-0}-${i}" \
               --data-binary @"$RESULTS_FILE")"
             if [[ "$CODE" != "201" && "$CODE" != "200" ]]; then
-              echo "::error::record failed for ${JUDGE_ID} HTTP ${CODE}"
+              echo "::error::record analyses failed for ${JUDGE_ID} HTTP ${CODE}"
               cat "${RUNNER_TEMP}/record-out.json" || true
               exit 1
             fi
+            echo "Recorded ${ITEMS} assessment(s) for ${JUDGE_ID}"
           fi
 
           SCORES="$(jq -r '[.items[] | select(.score != null) | "\(.name)=\(.score) (\(.outcome))"] | join(", ")' "$RESULTS_FILE" 2>/dev/null || true)"
           if [[ -n "$SCORES" ]]; then
             echo "scores: $SCORES"
           fi
-          FAILS="$(jq '[.items[] | select(.outcome=="fail" or .outcome=="error")] | length' "$RESULTS_FILE")"
-          FAIL_COUNT=$((FAIL_COUNT + FAILS))
+          # Also surface cached analyzed outcomes that already failed (when force-rerun is false).
+          CACHED_FAILS="$(jq '[.analyzed[]? | select(.outcome=="fail")] | length' "$LOOKUP_FILE" 2>/dev/null || echo 0)"
+          NEW_FAILS="$(jq '[.items[] | select(.outcome=="fail" or .outcome=="error")] | length' "$RESULTS_FILE")"
+          FAIL_COUNT=$((FAIL_COUNT + NEW_FAILS + CACHED_FAILS))
           echo "::endgroup::"
         done
 
