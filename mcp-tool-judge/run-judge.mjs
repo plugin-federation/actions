@@ -5,9 +5,13 @@
  *
  * Env:
  *   INPUT_JUDGES_FILE, INPUT_LOOKUP_FILE, INPUT_FINGERPRINTS_FILE,
- *   INPUT_OUTPUT_FILE, INPUT_CATALOG_DIGEST
+ *   INPUT_OUTPUT_FILE, INPUT_CATALOG_DIGEST, INPUT_SOURCE_ID
+ *   INPUT_PASS_THRESHOLD (optional override of judge.passThreshold)
  *   PROVIDER_API_KEY or XAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / AZURE_API_KEY
  *   PROVIDER_API_BASE (optional)
+ *
+ * Model responses should include overallScore (0–100). Pass/fail is derived
+ * from score vs passThreshold (inclusive).
  */
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -19,6 +23,120 @@ function substitute(template, vars) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) =>
     vars[key] !== undefined ? String(vars[key]) : `{{${key}}}`,
   );
+}
+
+function clampScore(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (value < 0) return 0;
+  if (value > 100) return 100;
+  return value;
+}
+
+function parseScoreField(value) {
+  if (typeof value === "number") return clampScore(value);
+  if (typeof value === "string") {
+    const match = value.match(/(-?\d+(?:\.\d+)?)\s*(?:\/\s*100)?/);
+    if (match) return clampScore(Number(match[1]));
+  }
+  return null;
+}
+
+function resolvePassThreshold(judge) {
+  const override = env("INPUT_PASS_THRESHOLD") || env("JUDGE_PASS_THRESHOLD");
+  if (override !== "") {
+    const n = Number(override);
+    if (Number.isFinite(n) && n >= 0 && n <= 100) return n;
+  }
+  const fromJudge = judge.passThreshold ?? judge.pass_threshold;
+  if (typeof fromJudge === "number" && Number.isFinite(fromJudge)) {
+    return clampScore(fromJudge) ?? 70;
+  }
+  // Legacy rubric.passThreshold as 0–1 fraction or 0–100 absolute
+  const rubric = judge.rubric || {};
+  const legacy = rubric.passThreshold ?? rubric.pass_threshold;
+  if (typeof legacy === "number" && Number.isFinite(legacy)) {
+    if (legacy > 0 && legacy <= 1) return Math.round(legacy * 100);
+    return clampScore(legacy) ?? 70;
+  }
+  return 70;
+}
+
+/**
+ * Parse LLM content into score, outcome, summary, and full report.
+ */
+function parseJudgeResponse(content, passThreshold) {
+  let report = null;
+  let score = null;
+  let summary = null;
+  let outcome = null;
+
+  try {
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      report = JSON.parse(jsonMatch[0]);
+      score =
+        parseScoreField(report.overallScore) ??
+        parseScoreField(report.overall_score) ??
+        parseScoreField(report.score) ??
+        parseScoreField(report["Overall Score"]);
+      if (typeof report.summary === "string") {
+        summary = report.summary.slice(0, 8000);
+      } else if (typeof report.Summary === "string") {
+        summary = report.Summary.slice(0, 8000);
+      }
+      if (
+        report.outcome === "pass" ||
+        report.outcome === "fail" ||
+        report.outcome === "error"
+      ) {
+        outcome = report.outcome;
+      }
+    }
+  } catch {
+    // fall through to text heuristics
+  }
+
+  if (score === null) {
+    // e.g. "Overall Score: 78/100" or "overallScore: 78"
+    const textScore = content.match(
+      /(?:overall\s*score|score)\s*[:=]?\s*(-?\d+(?:\.\d+)?)\s*(?:\/\s*100)?/i,
+    );
+    if (textScore) score = clampScore(Number(textScore[1]));
+  }
+
+  if (score !== null) {
+    outcome = score >= passThreshold ? "pass" : "fail";
+  } else if (!outcome) {
+    // Legacy pass/fail-only responses without a score
+    const lower = content.toLowerCase();
+    if (/\bfail\b/.test(lower)) {
+      outcome = "fail";
+    } else if (/\bpass\b/.test(lower)) {
+      outcome = "pass";
+    } else {
+      outcome = "error";
+    }
+  }
+
+  if (!summary) {
+    summary = content.slice(0, 8000);
+  }
+
+  return {
+    outcome,
+    score: score === null ? undefined : score,
+    summary,
+    report:
+      report && typeof report === "object"
+        ? {
+            ...report,
+            overallScore: score ?? report.overallScore,
+            passThreshold,
+          }
+        : score !== null
+          ? { overallScore: score, passThreshold, raw: content.slice(0, 4000) }
+          : undefined,
+  };
 }
 
 async function callOpenAiCompatible({ baseUrl, apiKey, model, system, user }) {
@@ -57,7 +175,7 @@ async function callAnthropic({ apiKey, model, system, user, baseUrl }) {
     },
     body: JSON.stringify({
       model,
-      max_tokens: 1024,
+      max_tokens: 4096,
       temperature: 0,
       system,
       messages: [{ role: "user", content: user }],
@@ -70,33 +188,6 @@ async function callAnthropic({ apiKey, model, system, user, baseUrl }) {
   const body = JSON.parse(text);
   const block = body.content?.find((c) => c.type === "text");
   return block?.text ?? "";
-}
-
-function parseOutcome(content) {
-  const lower = content.toLowerCase();
-  let outcome = "error";
-  if (/\bpass\b/.test(lower) && !/\bfail\b/.test(lower)) {
-    outcome = "pass";
-  } else if (/\bfail\b/.test(lower)) {
-    outcome = "fail";
-  } else if (/\bpass\b/.test(lower)) {
-    outcome = "pass";
-  }
-  try {
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (parsed.outcome === "pass" || parsed.outcome === "fail" || parsed.outcome === "error") {
-        outcome = parsed.outcome;
-      }
-      if (typeof parsed.summary === "string") {
-        return { outcome, summary: parsed.summary.slice(0, 8000) };
-      }
-    }
-  } catch {
-    // fall through
-  }
-  return { outcome, summary: content.slice(0, 8000) };
 }
 
 function resolveCredentials(preferredProvider) {
@@ -163,6 +254,7 @@ if (!judge) {
   process.exit(1);
 }
 
+const passThreshold = resolvePassThreshold(judge);
 const pending = lookup.pending || [];
 const creds = resolveCredentials(judge.preferredProvider);
 if (!creds.apiKey) {
@@ -177,7 +269,11 @@ const model =
 const systemPrompt = judge.systemPrompt;
 const userTemplate =
   judge.userPromptTemplate ||
-  "Evaluate this MCP tool. Reply with JSON: {\"outcome\":\"pass\"|\"fail\",\"summary\":\"...\"}\n\n{{tool_json}}";
+  "### Tool configuration\n{{tool_json}}";
+
+console.log(
+  `Judge ${judge.judgeId}@${judge.version}: passThreshold=${passThreshold}, pending=${pending.length}`,
+);
 
 const items = [];
 for (const p of pending) {
@@ -221,8 +317,8 @@ for (const p of pending) {
         user,
       });
     }
-    const parsed = parseOutcome(content);
-    items.push({
+    const parsed = parseJudgeResponse(content, passThreshold);
+    const item = {
       name: p.name,
       toolFingerprint: p.toolFingerprint,
       outcome: parsed.outcome,
@@ -232,14 +328,20 @@ for (const p of pending) {
       source: {
         kind: "github_actions",
         runId: env("GITHUB_RUN_ID") || undefined,
-        runUrl: env("GITHUB_SERVER_URL") && env("GITHUB_REPOSITORY") && env("GITHUB_RUN_ID")
-          ? `${env("GITHUB_SERVER_URL")}/${env("GITHUB_REPOSITORY")}/actions/runs/${env("GITHUB_RUN_ID")}`
-          : undefined,
+        runUrl:
+          env("GITHUB_SERVER_URL") && env("GITHUB_REPOSITORY") && env("GITHUB_RUN_ID")
+            ? `${env("GITHUB_SERVER_URL")}/${env("GITHUB_REPOSITORY")}/actions/runs/${env("GITHUB_RUN_ID")}`
+            : undefined,
         sha: env("GITHUB_SHA") || undefined,
         repositoryId: env("GITHUB_REPOSITORY_ID") || undefined,
       },
-    });
-    console.log(`judged ${p.name}: ${parsed.outcome}`);
+    };
+    if (parsed.score !== undefined) item.score = parsed.score;
+    if (parsed.report) item.report = parsed.report;
+    items.push(item);
+    const scoreLabel =
+      parsed.score !== undefined ? ` score=${parsed.score}` : "";
+    console.log(`judged ${p.name}: ${parsed.outcome}${scoreLabel} (threshold ${passThreshold})`);
   } catch (error) {
     items.push({
       name: p.name,
