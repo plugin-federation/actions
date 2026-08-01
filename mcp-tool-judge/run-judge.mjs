@@ -7,11 +7,14 @@
  *   INPUT_JUDGES_FILE, INPUT_LOOKUP_FILE, INPUT_FINGERPRINTS_FILE,
  *   INPUT_OUTPUT_FILE, INPUT_CATALOG_DIGEST, INPUT_SOURCE_ID
  *   INPUT_PASS_THRESHOLD (optional override of judge.passThreshold)
+ *   INPUT_WARN_THRESHOLD (optional override of judge.warnThreshold)
  *   PROVIDER_API_KEY or XAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / AZURE_API_KEY
  *   PROVIDER_API_BASE (optional)
  *
- * Model responses should include overallScore (0–100). Pass/fail is derived
- * from score vs passThreshold (inclusive).
+ * Model responses should include overallScore (0–100). Outcome is derived:
+ *   pass  when score >= passThreshold
+ *   warn  when warnThreshold is set and warnThreshold <= score < passThreshold
+ *   fail  otherwise (or error if no score / run failed)
  */
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -61,10 +64,36 @@ function resolvePassThreshold(judge) {
   return 70;
 }
 
+function resolveWarnThreshold(judge, passThreshold) {
+  const override = env("INPUT_WARN_THRESHOLD") || env("JUDGE_WARN_THRESHOLD");
+  if (override !== "") {
+    if (override.toLowerCase() === "none" || override.toLowerCase() === "null") {
+      return null;
+    }
+    const n = Number(override);
+    if (Number.isFinite(n) && n >= 0 && n <= 100) {
+      return Math.min(n, passThreshold);
+    }
+  }
+  const fromJudge = judge.warnThreshold ?? judge.warn_threshold;
+  if (typeof fromJudge === "number" && Number.isFinite(fromJudge)) {
+    const clamped = clampScore(fromJudge);
+    if (clamped === null) return null;
+    return Math.min(clamped, passThreshold);
+  }
+  return null;
+}
+
+function outcomeFromScore(score, passThreshold, warnThreshold) {
+  if (score >= passThreshold) return "pass";
+  if (warnThreshold !== null && score >= warnThreshold) return "warn";
+  return "fail";
+}
+
 /**
  * Parse LLM content into score, outcome, summary, and full report.
  */
-function parseJudgeResponse(content, passThreshold) {
+function parseJudgeResponse(content, passThreshold, warnThreshold) {
   let report = null;
   let score = null;
   let summary = null;
@@ -87,6 +116,7 @@ function parseJudgeResponse(content, passThreshold) {
       if (
         report.outcome === "pass" ||
         report.outcome === "fail" ||
+        report.outcome === "warn" ||
         report.outcome === "error"
       ) {
         outcome = report.outcome;
@@ -104,13 +134,16 @@ function parseJudgeResponse(content, passThreshold) {
     if (textScore) score = clampScore(Number(textScore[1]));
   }
 
+  // Score is authoritative when present (overrides model-supplied outcome).
   if (score !== null) {
-    outcome = score >= passThreshold ? "pass" : "fail";
+    outcome = outcomeFromScore(score, passThreshold, warnThreshold);
   } else if (!outcome) {
-    // Legacy pass/fail-only responses without a score
+    // Legacy text responses without a score
     const lower = content.toLowerCase();
     if (/\bfail\b/.test(lower)) {
       outcome = "fail";
+    } else if (/\bwarn\b/.test(lower)) {
+      outcome = "warn";
     } else if (/\bpass\b/.test(lower)) {
       outcome = "pass";
     } else {
@@ -132,9 +165,15 @@ function parseJudgeResponse(content, passThreshold) {
             ...report,
             overallScore: score ?? report.overallScore,
             passThreshold,
+            warnThreshold,
           }
         : score !== null
-          ? { overallScore: score, passThreshold, raw: content.slice(0, 4000) }
+          ? {
+              overallScore: score,
+              passThreshold,
+              warnThreshold,
+              raw: content.slice(0, 4000),
+            }
           : undefined,
   };
 }
@@ -255,6 +294,7 @@ if (!judge) {
 }
 
 const passThreshold = resolvePassThreshold(judge);
+const warnThreshold = resolveWarnThreshold(judge, passThreshold);
 const pending = lookup.pending || [];
 const creds = resolveCredentials(judge.preferredProvider);
 if (!creds.apiKey) {
@@ -272,7 +312,9 @@ const userTemplate =
   "### Tool configuration\n{{tool_json}}";
 
 console.log(
-  `Judge ${judge.judgeId}@${judge.version}: passThreshold=${passThreshold}, pending=${pending.length}`,
+  `Judge ${judge.judgeId}@${judge.version}: passThreshold=${passThreshold}` +
+    (warnThreshold !== null ? `, warnThreshold=${warnThreshold}` : "") +
+    `, pending=${pending.length}`,
 );
 
 const items = [];
@@ -317,7 +359,7 @@ for (const p of pending) {
         user,
       });
     }
-    const parsed = parseJudgeResponse(content, passThreshold);
+    const parsed = parseJudgeResponse(content, passThreshold, warnThreshold);
     const item = {
       name: p.name,
       toolFingerprint: p.toolFingerprint,
@@ -341,7 +383,12 @@ for (const p of pending) {
     items.push(item);
     const scoreLabel =
       parsed.score !== undefined ? ` score=${parsed.score}` : "";
-    console.log(`judged ${p.name}: ${parsed.outcome}${scoreLabel} (threshold ${passThreshold})`);
+    console.log(
+      `judged ${p.name}: ${parsed.outcome}${scoreLabel}` +
+        ` (pass≥${passThreshold}` +
+        (warnThreshold !== null ? `, warn≥${warnThreshold}` : "") +
+        `)`,
+    );
   } catch (error) {
     items.push({
       name: p.name,
