@@ -198,7 +198,7 @@ runs:
         SOURCE_SEG="$(printf '%s' "$EFFECTIVE_SOURCE" | jq -sRr @uri)"
         QUERY="tenantId=$(printf '%s' "$TENANT_ID" | jq -sRr @uri)"
         QUERY+="&sourceVersion=$(printf '%s' "$EFFECTIVE_VERSION" | jq -sRr @uri)"
-        CONSOLE_LINK="${CONSOLE_BASE}/dashboard/tool-sources/${SOURCE_SEG}/catalogs/${DIGEST_SEG}?${QUERY}"
+        CONSOLE_LINK="${CONSOLE_BASE}/tool-sources/${SOURCE_SEG}/catalogs/${DIGEST_SEG}?${QUERY}"
 
         {
           echo "catalog-digest=${CATALOG_DIGEST}"

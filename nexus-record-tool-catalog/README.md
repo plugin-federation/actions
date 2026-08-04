@@ -46,7 +46,7 @@ steps:
 The Action prints a GitHub notice and job summary link to the Console evidence page:
 
 ```text
-{console}/dashboard/tool-sources/{sourceId}/catalogs/{catalogDigest}?tenantId=…&sourceVersion=…
+{console}/tool-sources/{sourceId}/catalogs/{catalogDigest}?tenantId=…&sourceVersion=…
 ```
 
 ## Inputs
