@@ -57,12 +57,26 @@ inputs:
       warn outcomes are reported but do not fail the job by default.
     required: false
     default: "true"
+  embedding-model:
+    description: >-
+      When set, run mcp-tool-embed after catalog record. Embeddings use
+      name+description only and are memoized in Nexus separately from LLM
+      judges (schema-only changes do not re-embed).
+    required: false
+    default: ""
+  embedding-provider:
+    description: "Provider for embeddings (openai | xai | azure_openai | other)"
+    required: false
+    default: "openai"
 
 outputs:
   fingerprints-file:
     value: ${{ steps.fp.outputs.output-file }}
   judges-file:
     value: ${{ steps.judges.outputs.output-file }}
+  embeddings-file:
+    description: "Path to embeddings JSON when embedding-model is set"
+    value: ${{ steps.embed.outputs.output-file }}
   catalog-digest:
     description: "Content-addressed catalog digest (from record step or input)"
     value: ${{ steps.digest.outputs.catalog-digest }}
@@ -113,6 +127,37 @@ runs:
         else
           echo "No catalogDigest (analyses will omit it)"
         fi
+
+    - name: Embed tools (name + description)
+      id: embed
+      if: ${{ inputs.embedding-model != '' }}
+      shell: bash
+      env:
+        INPUT_TOOLS_LIST_FILE: ${{ inputs.tools-list-file }}
+        INPUT_OUTPUT_FILE: ${{ runner.temp }}/tool-embeddings.json
+        INPUT_EMBEDDING_MODEL: ${{ inputs.embedding-model }}
+        INPUT_PROVIDER: ${{ inputs.embedding-provider }}
+        INPUT_FORCE_RERUN: ${{ inputs.force-rerun }}
+        INPUT_NEXUS_URL: ${{ inputs.nexus-url }}
+        INPUT_TENANT_ID: ${{ inputs.tenant-id }}
+        INPUT_SOURCE_ID: ${{ inputs.source-id }}
+        INPUT_ACCESS_TOKEN: ${{ inputs.access-token }}
+        INPUT_CATALOG_DIGEST: ${{ steps.digest.outputs.catalog-digest }}
+        INPUT_JUDGE_ID: tool-embedding
+      run: |
+        set -euo pipefail
+        echo "::add-mask::${INPUT_ACCESS_TOKEN}"
+        node "${{ github.action_path }}/../mcp-tool-embed/run-embed.mjs"
+        COUNT="$(jq '.items | length' "${INPUT_OUTPUT_FILE}")"
+        NEW="$(jq '.newCount // 0' "${INPUT_OUTPUT_FILE}")"
+        CACHED="$(jq '[.items[]? | select(.source=="cache")] | length' "${INPUT_OUTPUT_FILE}")"
+        ERR="$(jq '.errorCount // 0' "${INPUT_OUTPUT_FILE}")"
+        echo "output-file=${INPUT_OUTPUT_FILE}" >> "$GITHUB_OUTPUT"
+        echo "tool-count=${COUNT}" >> "$GITHUB_OUTPUT"
+        echo "new-count=${NEW}" >> "$GITHUB_OUTPUT"
+        echo "cached-count=${CACHED}" >> "$GITHUB_OUTPUT"
+        echo "error-count=${ERR}" >> "$GITHUB_OUTPUT"
+        echo "Embeddings: tools=${COUNT} new=${NEW} cache=${CACHED} error=${ERR}"
 
     - name: Fingerprint tools
       id: fp

@@ -5,6 +5,7 @@
 /nexus-oidc-exchange/ @plugin-federation/maintainers
 /nexus-record-tool-catalog/ @plugin-federation/maintainers
 /mcp-tool-fingerprint/ @plugin-federation/maintainers
+/mcp-tool-embed/ @plugin-federation/maintainers
 /nexus-list-tool-judges/ @plugin-federation/maintainers
 /nexus-tool-analysis-lookup/ @plugin-federation/maintainers
 /mcp-tool-judge/ @plugin-federation/maintainers

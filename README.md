@@ -17,6 +17,7 @@ uses: plugin-federation/actions/mcp-tool-judge-pipeline@main
 | Nexus OIDC exchange | [`nexus-oidc-exchange/`](./nexus-oidc-exchange/) | GHA OIDC → Nexus JWT |
 | Nexus record tool catalog | [`nexus-record-tool-catalog/`](./nexus-record-tool-catalog/) | POST tools/list catalog |
 | MCP tool fingerprint | [`mcp-tool-fingerprint/`](./mcp-tool-fingerprint/) | Fingerprints for analysis cache |
+| MCP tool embed | [`mcp-tool-embed/`](./mcp-tool-embed/) | Name+description embeddings (memoized) |
 | Nexus list tool judges | [`nexus-list-tool-judges/`](./nexus-list-tool-judges/) | Fetch judge prompts from Nexus |
 | Nexus tool analysis lookup | [`nexus-tool-analysis-lookup/`](./nexus-tool-analysis-lookup/) | Pending vs analyzed tools |
 | MCP tool LLM judge | [`mcp-tool-judge/`](./mcp-tool-judge/) | Run model on pending tools |
