@@ -1,0 +1,207 @@
+name: "Anthropic MCP Eval"
+description: >-
+  Run MCP functional evaluations (Anthropic skill-creator evaluations.xml
+  qa_pair format) against a stdio/SSE/HTTP MCP server via LiteLLM providers.
+author: "Plugin Federation"
+branding:
+  icon: check-circle
+  color: purple
+
+inputs:
+  evals-dir:
+    description: "Path to evals directory containing evaluations.xml"
+    required: true
+  transport:
+    description: "MCP server transport type (stdio, sse, or http)"
+    default: "stdio"
+  mcp-command:
+    description: "Command to run MCP server via stdio (e.g. 'python', 'npx')"
+    required: false
+  mcp-args:
+    description: "Arguments for the MCP server command (stdio only)"
+    required: false
+  mcp-url:
+    description: "MCP server URL (sse/http only)"
+    required: false
+  env-vars:
+    description: "Environment variables in KEY=VALUE format (stdio only)"
+    required: false
+  headers:
+    description: "HTTP headers in 'Key: Value' format (sse/http only)"
+    required: false
+  python-version:
+    description: "Python version for evaluation.py"
+    default: "3.11"
+  accuracy-threshold:
+    description: "Minimum accuracy (%) to consider evaluation passing"
+    default: "100"
+  provider-model:
+    description: >
+      LiteLLM model string for routing. Examples:
+      - "anthropic/claude-3-7-sonnet-20250219"
+      - "openai/gpt-4o"
+      - "azure/gpt-4o"
+      - "bedrock/anthropic.claude-3-7-sonnet-20250219-v1:0"
+    required: false
+    default: "anthropic/claude-3-7-sonnet-20250219"
+  provider-api-key:
+    description: >
+      API key for the target provider. Mapped to the correct env var per provider:
+      - anthropic → ANTHROPIC_API_KEY
+      - openai → OPENAI_API_KEY
+      - xai → XAI_API_KEY
+      - azure → AZURE_API_KEY
+      - bedrock → use AWS credentials instead
+    required: false
+  provider-api-base:
+    description: >
+      Custom API base URL. Mapped to the correct env var per provider:
+      - openai/xai → OPENAI_API_BASE / XAI_API_BASE
+      - azure → AZURE_API_BASE
+      Example: "https://api.x.ai/v1" or "https://..openai.azure.com/v1"
+    required: false
+  provider-api-version:
+    description: >
+      API version for Azure OpenAI. Sets AZURE_API_VERSION.
+      Example: "2024-06-01"
+    required: false
+  provider-deployment:
+    description: >
+      Azure OpenAI deployment name. Sets LITELLM_AZURE_DEPLOYMENT_NAME.
+    required: false
+  bedrock-region:
+    description: >
+      AWS region for Bedrock. Sets AWS_REGION_NAME.
+    required: false
+  bedrock-profile:
+    description: >
+      AWS profile name for Bedrock credentials.
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install evaluation dependencies
+      shell: bash
+      # mcp 2.0 removed streamablehttp_client (and FastMCP under mcp.server.fastmcp).
+      # Pin the 1.x client API used by connections.py and FastMCP-based servers.
+      run: pip install litellm 'mcp>=1.0.0,<2'
+
+    - name: Run evaluations (stdio)
+      if: inputs.transport == 'stdio'
+      id: tests
+      shell: bash
+      env:
+        EVALS_DIR: ${{ inputs.evals-dir }}
+        MODEL: ${{ inputs.provider-model }}
+        ANTHROPIC_API_KEY: ${{ inputs.provider-api-key }}
+        OPENAI_API_KEY: ${{ inputs.provider-api-key }}
+        OPENAI_API_BASE: ${{ inputs.provider-api-base }}
+        XAI_API_KEY: ${{ inputs.provider-api-key }}
+        XAI_API_BASE: ${{ inputs.provider-api-base }}
+        AZURE_API_KEY: ${{ inputs.provider-api-key }}
+        AZURE_API_BASE: ${{ inputs.provider-api-base }}
+        AZURE_API_VERSION: ${{ inputs.provider-api-version }}
+        LITELLM_AZURE_DEPLOYMENT_NAME: ${{ inputs.provider-deployment }}
+        AWS_REGION_NAME: ${{ inputs.bedrock-region }}
+        AWS_BEDROCK_PROFILE: ${{ inputs.bedrock-profile }}
+      run: |
+        python ${{ github.action_path }}/evaluation.py \
+          -t stdio \
+          -c ${{ inputs.mcp-command }} \
+          ${{ inputs.mcp-args != '' && format('-a {0}', inputs.mcp-args) || '' }} \
+          ${{ inputs.env-vars != '' && format('-e {0}', inputs.env-vars) || '' }} \
+          -o evaluation_report.md \
+          ${{ inputs.evals-dir }}/evaluations.xml
+
+    - name: Run evaluations (sse)
+      if: inputs.transport == 'sse'
+      id: tests-sse
+      shell: bash
+      env:
+        MODEL: ${{ inputs.provider-model }}
+        ANTHROPIC_API_KEY: ${{ inputs.provider-api-key }}
+        OPENAI_API_KEY: ${{ inputs.provider-api-key }}
+        OPENAI_API_BASE: ${{ inputs.provider-api-base }}
+        XAI_API_KEY: ${{ inputs.provider-api-key }}
+        XAI_API_BASE: ${{ inputs.provider-api-base }}
+        AZURE_API_KEY: ${{ inputs.provider-api-key }}
+        AZURE_API_BASE: ${{ inputs.provider-api-base }}
+        AZURE_API_VERSION: ${{ inputs.provider-api-version }}
+        LITELLM_AZURE_DEPLOYMENT_NAME: ${{ inputs.provider-deployment }}
+        AWS_REGION_NAME: ${{ inputs.bedrock-region }}
+        AWS_BEDROCK_PROFILE: ${{ inputs.bedrock-profile }}
+      run: |
+        python ${{ github.action_path }}/evaluation.py \
+          -t sse \
+          -u ${{ inputs.mcp-url }} \
+          ${{ inputs.headers != '' && format('-H {0}', inputs.headers) || '' }} \
+          -o evaluation_report.md \
+          ${{ inputs.evals-dir }}/evaluations.xml
+
+    - name: Run evaluations (http)
+      if: inputs.transport == 'http'
+      id: tests-http
+      shell: bash
+      env:
+        MODEL: ${{ inputs.provider-model }}
+        ANTHROPIC_API_KEY: ${{ inputs.provider-api-key }}
+        OPENAI_API_KEY: ${{ inputs.provider-api-key }}
+        OPENAI_API_BASE: ${{ inputs.provider-api-base }}
+        XAI_API_KEY: ${{ inputs.provider-api-key }}
+        XAI_API_BASE: ${{ inputs.provider-api-base }}
+        AZURE_API_KEY: ${{ inputs.provider-api-key }}
+        AZURE_API_BASE: ${{ inputs.provider-api-base }}
+        AZURE_API_VERSION: ${{ inputs.provider-api-version }}
+        LITELLM_AZURE_DEPLOYMENT_NAME: ${{ inputs.provider-deployment }}
+        AWS_REGION_NAME: ${{ inputs.bedrock-region }}
+        AWS_BEDROCK_PROFILE: ${{ inputs.bedrock-profile }}
+      run: |
+        python ${{ github.action_path }}/evaluation.py \
+          -t http \
+          -u ${{ inputs.mcp-url }} \
+          ${{ inputs.headers != '' && format('-H {0}', inputs.headers) || '' }} \
+          -o evaluation_report.md \
+          ${{ inputs.evals-dir }}/evaluations.xml
+
+    - name: Extract evals-dir name
+      id: dirname
+      shell: bash
+      run: echo "name=$(basename "${{ inputs.evals-dir }}")" >> $GITHUB_OUTPUT
+
+    - name: Upload evaluation report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: eval-report-${{ steps.dirname.outputs.name }}
+        path: evaluation_report.md
+        retention-days: 30
+
+    - name: Check accuracy
+      id: check
+      shell: bash
+      run: |
+        cat evaluation_report.md
+        # Extract the accuracy percentage from the report line like:
+        # - **Accuracy**: 8/8 (100.0%)
+        # We need the number inside the parentheses, not the count before the slash.
+        accuracy_line=$(grep '\*\*Accuracy\*\*:' evaluation_report.md | head -1)
+        accuracy=$(echo "$accuracy_line" | sed -n 's/.*(\([0-9]*\.[0-9]*\)%).*/\1/p')
+        # If sed didn't match (e.g. integer percentage), try without decimal
+        if [ -z "$accuracy" ]; then
+          accuracy=$(echo "$accuracy_line" | sed -n 's/.*(\([0-9]*\)%).*/\1/p')
+        fi
+        if [ -z "$accuracy" ]; then
+          accuracy=0
+        fi
+        echo "accuracy=$accuracy" >> $GITHUB_OUTPUT
+        threshold=${{ inputs.accuracy-threshold }}
+        if (( $(echo "$accuracy < $threshold" | bc -l) )); then
+          echo "::error::Evaluation failed: ${accuracy}% accuracy (threshold: ${threshold}%)"
+          exit 1
+        fi

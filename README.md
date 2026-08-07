@@ -7,6 +7,7 @@ uses: plugin-federation/actions/mcp-tools-list-validate@main
 uses: plugin-federation/actions/nexus-oidc-exchange@main
 uses: plugin-federation/actions/nexus-record-tool-catalog@main
 uses: plugin-federation/actions/mcp-tool-judge-pipeline@main
+uses: plugin-federation/actions/anthropic-mcp-eval@main
 ```
 
 ## Actions
@@ -14,6 +15,7 @@ uses: plugin-federation/actions/mcp-tool-judge-pipeline@main
 | Action | Path | Purpose |
 |---|---|---|
 | MCP `tools/list` validate | [`mcp-tools-list-validate/`](./mcp-tools-list-validate/) | Structural validate |
+| Anthropic MCP eval | [`anthropic-mcp-eval/`](./anthropic-mcp-eval/) | Functional `evaluations.xml` harness |
 | Nexus OIDC exchange | [`nexus-oidc-exchange/`](./nexus-oidc-exchange/) | GHA OIDC → Nexus JWT |
 | Nexus record tool catalog | [`nexus-record-tool-catalog/`](./nexus-record-tool-catalog/) | POST tools/list catalog |
 | MCP tool fingerprint | [`mcp-tool-fingerprint/`](./mcp-tool-fingerprint/) | Fingerprints for analysis cache |
@@ -23,6 +25,10 @@ uses: plugin-federation/actions/mcp-tool-judge-pipeline@main
 | MCP tool LLM judge | [`mcp-tool-judge/`](./mcp-tool-judge/) | Run model on pending tools |
 | Nexus record tool analyses | [`nexus-record-tool-analyses/`](./nexus-record-tool-analyses/) | POST analysis results |
 | MCP tool judge pipeline | [`mcp-tool-judge-pipeline/`](./mcp-tool-judge-pipeline/) | End-to-end multi-judge CI |
+
+> **Note:** Prefer this repository over the retired
+> `plugin-federation/plugin-federation-actions` monorepo. Point all
+> `uses:` lines at `plugin-federation/actions/...`.
 
 ### LLM-as-judge (CI execution, Nexus definitions)
 
