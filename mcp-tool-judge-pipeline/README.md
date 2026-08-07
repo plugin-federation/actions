@@ -3,13 +3,18 @@
 End-to-end CI step for an MCP `tools/list`:
 
 1. **Record tool catalog** in Nexus (immutable snapshot + Console deep link)
-2. Load **judge definitions** from Nexus (system prompts + `passThreshold`)
-3. Fingerprint tools, look up **pending** tools per judge
-4. Run the **LLM in GitHub Actions** with CI secrets
-5. **Record assessments** (score 0–100, derived pass/fail, report) back to Nexus
+2. Optionally **embed tools** (`embedding-model`) — name + description only,
+   memoized separately so schema-only changes do not re-embed
+3. Load **judge definitions** from Nexus (system prompts + `passThreshold`)
+4. Fingerprint tools, look up **pending** tools per judge
+5. Run the **LLM in GitHub Actions** with CI secrets
+6. **Record assessments** (score 0–100, derived pass/fail, report) back to Nexus
 
 Judges return an **overallScore** from **0–100**. CI derives
 `outcome=pass` when `score >= passThreshold` (default **70**), else `fail`.
+
+Embeddings use [`mcp-tool-embed`](../mcp-tool-embed) with synthetic judge
+`tool-embedding` and a fingerprint of **name + description only**.
 
 ## Prerequisites
 
@@ -24,6 +29,8 @@ permissions:
   records when no judges are configured.
 - Provider secret in the job env (e.g. `XAI_API_KEY`) matching judges’
   `preferredProvider`.
+- Optional embeddings: set `embedding-model` and provide the embedding
+  provider key (e.g. `OPENAI_API_KEY` for `embedding-provider: openai`).
 
 ## Usage
 
@@ -44,8 +51,11 @@ permissions:
     access-token: ${{ steps.auth.outputs.access-token }}
     tools-list-file: ci/tools-list.json
     source-version: ${{ github.sha }}
+    embedding-model: text-embedding-3-small
+    embedding-provider: openai
   env:
     XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
 Outputs include `catalog-digest` and `catalog-console-url` for job summaries.

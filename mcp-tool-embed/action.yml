@@ -1,0 +1,116 @@
+name: "MCP tool embed"
+description: >-
+  Compute vector embeddings for MCP tools using an embedding model.
+  Input text is tool name + description only. When Nexus credentials are
+  provided, results are memoized under synthetic judge tool-embedding so
+  tools are re-embedded only when name or description change (not schema).
+author: "Plugin Federation"
+branding:
+  icon: database
+  color: purple
+
+inputs:
+  tools-list-file:
+    description: "Path to tools/list JSON ({ tools: [...] })"
+    required: true
+  embedding-model:
+    description: >-
+      Embedding model id (e.g. text-embedding-3-small). Also used as
+      Nexus judgeVersion for the cache key.
+    required: true
+  provider:
+    description: "openai | xai | azure_openai | other (OpenAI-compatible /embeddings)"
+    required: false
+    default: "openai"
+  output-file:
+    description: "Where to write embeddings JSON"
+    required: false
+    default: "tool-embeddings.json"
+  force-rerun:
+    description: "If true, ignore Nexus cache and re-embed all tools"
+    required: false
+    default: "false"
+  batch-size:
+    description: "Max texts per /embeddings request"
+    required: false
+    default: "32"
+  # Optional Nexus memoization (all four required to enable cache)
+  nexus-url:
+    description: "Nexus base URL (enables memoization with tenant/source/token)"
+    required: false
+    default: "https://api.plugin-federation.com"
+  tenant-id:
+    required: false
+    default: ""
+  source-id:
+    required: false
+    default: ""
+  access-token:
+    description: "Nexus bearer from nexus-oidc-exchange"
+    required: false
+    default: ""
+  catalog-digest:
+    description: "Optional catalog digest attached to recorded analyses"
+    required: false
+    default: ""
+  judge-id:
+    description: >-
+      Synthetic judge id used for the Nexus analysis cache (default
+      tool-embedding). Prefer leaving the default.
+    required: false
+    default: "tool-embedding"
+  # Provider secrets must be mapped into the job env by the caller
+  # (OPENAI_API_KEY, XAI_API_KEY, AZURE_API_KEY, or PROVIDER_API_KEY).
+
+outputs:
+  output-file:
+    description: "Path to embeddings JSON"
+    value: ${{ steps.run.outputs.output-file }}
+  tool-count:
+    description: "Number of tools in the output"
+    value: ${{ steps.run.outputs.tool-count }}
+  new-count:
+    description: "Embeddings computed this run"
+    value: ${{ steps.run.outputs.new-count }}
+  cached-count:
+    description: "Embeddings reused from Nexus cache"
+    value: ${{ steps.run.outputs.cached-count }}
+  error-count:
+    description: "Tools that failed to embed"
+    value: ${{ steps.run.outputs.error-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Embed tools (name + description)
+      id: run
+      shell: bash
+      env:
+        INPUT_TOOLS_LIST_FILE: ${{ inputs.tools-list-file }}
+        INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
+        INPUT_EMBEDDING_MODEL: ${{ inputs.embedding-model }}
+        INPUT_PROVIDER: ${{ inputs.provider }}
+        INPUT_FORCE_RERUN: ${{ inputs.force-rerun }}
+        INPUT_BATCH_SIZE: ${{ inputs.batch-size }}
+        INPUT_NEXUS_URL: ${{ inputs.nexus-url }}
+        INPUT_TENANT_ID: ${{ inputs.tenant-id }}
+        INPUT_SOURCE_ID: ${{ inputs.source-id }}
+        INPUT_ACCESS_TOKEN: ${{ inputs.access-token }}
+        INPUT_CATALOG_DIGEST: ${{ inputs.catalog-digest }}
+        INPUT_JUDGE_ID: ${{ inputs.judge-id }}
+      run: |
+        set -euo pipefail
+        if [[ -n "${INPUT_ACCESS_TOKEN:-}" ]]; then
+          echo "::add-mask::${INPUT_ACCESS_TOKEN}"
+        fi
+        node "${{ github.action_path }}/run-embed.mjs"
+        COUNT="$(jq '.items | length' "${INPUT_OUTPUT_FILE}")"
+        NEW="$(jq '.newCount // 0' "${INPUT_OUTPUT_FILE}")"
+        CACHED="$(jq '[.items[]? | select(.source=="cache")] | length' "${INPUT_OUTPUT_FILE}")"
+        ERR="$(jq '.errorCount // 0' "${INPUT_OUTPUT_FILE}")"
+        echo "output-file=${INPUT_OUTPUT_FILE}" >> "$GITHUB_OUTPUT"
+        echo "tool-count=${COUNT}" >> "$GITHUB_OUTPUT"
+        echo "new-count=${NEW}" >> "$GITHUB_OUTPUT"
+        echo "cached-count=${CACHED}" >> "$GITHUB_OUTPUT"
+        echo "error-count=${ERR}" >> "$GITHUB_OUTPUT"
+        echo "Embeddings: tools=${COUNT} new=${NEW} cache=${CACHED} error=${ERR}"
