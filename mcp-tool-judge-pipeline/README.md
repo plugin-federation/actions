@@ -8,7 +8,10 @@ End-to-end CI step for an MCP `tools/list`:
 3. Load **judge definitions** from Nexus (system prompts + `passThreshold`)
 4. Fingerprint tools, look up **pending** tools per judge
 5. Run the **LLM in GitHub Actions** with CI secrets
-6. **Record assessments** (score 0–100, derived pass/fail, report) back to Nexus
+6. **Record assessments** (score 0–100, derived pass/fail, report) back to Nexus,
+   including **cache stamps** for tools that did not re-run so Console `/checks`
+   can group this GitHub Actions `runId` (checks only list runs that posted
+   analyses with `source.runId`)
 
 Judges return an **overallScore** from **0–100**. CI derives
 `outcome=pass` when `score >= passThreshold` (default **70**), else `fail`.

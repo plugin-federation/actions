@@ -312,19 +312,6 @@ runs:
 
           ITEMS="$(jq '.items|length' "$RESULTS_FILE")"
           if [[ "$ITEMS" != "0" ]]; then
-            CODE="$(curl -sS -o "${RUNNER_TEMP}/record-out.json" -w "%{http_code}" \
-              -X POST "${NEXUS_URL}/api/v1/tenants/${TENANT_ID}/tool-sources/${SOURCE_ID}/tool-analyses" \
-              -H "authorization: Bearer ${ACCESS_TOKEN}" \
-              -H "content-type: application/json" \
-              -H "idempotency-key: analyses-${JUDGE_ID}-${GITHUB_SHA:-x}-${GITHUB_RUN_ID:-0}" \
-              -H "x-request-id: gha-${GITHUB_RUN_ID:-0}-${i}" \
-              --data-binary @"$RESULTS_FILE")"
-            if [[ "$CODE" != "201" && "$CODE" != "200" ]]; then
-              echo "::error::record analyses failed for ${JUDGE_ID} HTTP ${CODE}"
-              cat "${RUNNER_TEMP}/record-out.json" || true
-              exit 1
-            fi
-            echo "Recorded ${ITEMS} new assessment(s) for ${JUDGE_ID} in Nexus"
             echo "New assessments (this run):"
             while IFS=$'\t' read -r name outcome score; do
               [[ -z "$name" ]] && continue
@@ -332,8 +319,76 @@ runs:
             done < <(jq -r '.items[]? | [.name, .outcome, (if .score == null then "" else (.score|tostring) end)] | @tsv' "$RESULTS_FILE")
           elif [[ "$PENDING_N" != "0" ]]; then
             echo "::warning::pending=${PENDING_N} but no analysis items were produced"
+          fi
+
+          # Console /checks aggregates by source.runId on tool_analyses rows.
+          # Cache hits skip the LLM but must still be stamped for this GHA run
+          # (and catalogDigest) or the run never appears on the checks page.
+          RUN_URL=""
+          if [[ -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
+            RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          fi
+          RECORD_BODY="${RUNNER_TEMP}/record-body-${JUDGE_ID}.json"
+          jq -n \
+            --arg judgeId "$JUDGE_ID" \
+            --arg judgeVersion "$JUDGE_VERSION" \
+            --arg catalogDigest "${CATALOG_DIGEST:-}" \
+            --arg runId "${GITHUB_RUN_ID:-}" \
+            --arg runUrl "$RUN_URL" \
+            --arg sha "${GITHUB_SHA:-}" \
+            --arg repositoryId "${GITHUB_REPOSITORY_ID:-}" \
+            --slurpfile lookup "$LOOKUP_FILE" \
+            --slurpfile results "$RESULTS_FILE" \
+            '
+            def pipeline_source:
+              { kind: "github_actions" }
+              + (if $runId != "" then { runId: $runId } else {} end)
+              + (if $runUrl != "" then { runUrl: $runUrl } else {} end)
+              + (if $sha != "" then { sha: $sha } else {} end)
+              + (if $repositoryId != "" then { repositoryId: $repositoryId } else {} end);
+
+            ($results[0].items // []) as $new
+            | ($new | map(.name)) as $new_names
+            | ($lookup[0].analyzed // []
+                | map(select(.name as $n | ($new_names | index($n) | not)))
+                | map(
+                    {
+                      name: .name,
+                      toolFingerprint: .toolFingerprint,
+                      outcome: .outcome,
+                      summary: "Reused from Nexus analysis cache for this pipeline run",
+                      source: pipeline_source
+                    }
+                    + (if .score != null then { score: .score } else {} end)
+                  )
+              ) as $stamped
+            | {
+                judgeId: $judgeId,
+                judgeVersion: $judgeVersion,
+                items: ($new + $stamped)
+              }
+              + (if $catalogDigest != "" then { catalogDigest: $catalogDigest } else {} end)
+            ' > "$RECORD_BODY"
+
+          RECORD_N="$(jq '.items | length' "$RECORD_BODY")"
+          NEW_N="$(jq '.items | length' "$RESULTS_FILE")"
+          STAMP_N=$((RECORD_N - NEW_N))
+          if [[ "$RECORD_N" != "0" ]]; then
+            CODE="$(curl -sS -o "${RUNNER_TEMP}/record-out.json" -w "%{http_code}" \
+              -X POST "${NEXUS_URL}/api/v1/tenants/${TENANT_ID}/tool-sources/${SOURCE_ID}/tool-analyses" \
+              -H "authorization: Bearer ${ACCESS_TOKEN}" \
+              -H "content-type: application/json" \
+              -H "idempotency-key: analyses-${JUDGE_ID}-${GITHUB_SHA:-x}-${GITHUB_RUN_ID:-0}" \
+              -H "x-request-id: gha-${GITHUB_RUN_ID:-0}-${i}" \
+              --data-binary @"$RECORD_BODY")"
+            if [[ "$CODE" != "201" && "$CODE" != "200" ]]; then
+              echo "::error::record analyses failed for ${JUDGE_ID} HTTP ${CODE}"
+              cat "${RUNNER_TEMP}/record-out.json" || true
+              exit 1
+            fi
+            echo "Recorded ${RECORD_N} assessment(s) for ${JUDGE_ID} (new=${NEW_N}, cache-stamp=${STAMP_N}) — runId=${GITHUB_RUN_ID:-none}"
           else
-            echo "No pending tools — used Nexus cache only (nothing new to POST)"
+            echo "No assessments to record for ${JUDGE_ID}"
           fi
 
           echo "::endgroup::"
