@@ -11,7 +11,9 @@ End-to-end CI step for an MCP `tools/list`:
 6. **Record assessments** (score 0–100, derived pass/fail, report) back to Nexus,
    including **cache stamps** for tools that did not re-run so Console `/checks`
    can group this GitHub Actions `runId` (checks only list runs that posted
-   analyses with `source.runId`)
+   analyses with `source.runId`). Stamped cache hits **copy the prior
+   `summary`/`report`** from lookup so Console opinion is the real assessment,
+   not a reuse placeholder.
 
 Judges return an **overallScore** from **0–100**. CI derives
 `outcome=pass` when `score >= passThreshold` (default **70**), else `fail`.

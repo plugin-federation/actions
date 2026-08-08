@@ -124,6 +124,12 @@ runs:
           REQUEST_ID="gha-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-1}"
         fi
 
+        # Strip FastMCP *Arguments / *Output titles and result envelopes before
+        # catalog record so Console + digests match real tool call schemas.
+        node "${{ github.action_path }}/../mcp-tool-fingerprint/normalize-cli.mjs" \
+          --input "$TOOLS_LIST_FILE" \
+          --output "${RUNNER_TEMP}/tools-list-normalized.json"
+
         # Map MCP tools/list → Nexus tool-catalog (contract fields only).
         jq \
           --arg sourceId "$SOURCE_ID" \
@@ -142,7 +148,7 @@ runs:
                 + (if .annotations then {annotations: .annotations} else {} end)
             ]
           }' \
-          "$TOOLS_LIST_FILE" > "${RUNNER_TEMP}/nexus-tool-catalog.json"
+          "${RUNNER_TEMP}/tools-list-normalized.json" > "${RUNNER_TEMP}/nexus-tool-catalog.json"
 
         TOOL_COUNT="$(jq '.tools | length' "${RUNNER_TEMP}/nexus-tool-catalog.json")"
         echo "Submitting catalog: sourceId=${SOURCE_ID} sourceVersion=${SOURCE_VERSION} tools=${TOOL_COUNT}"

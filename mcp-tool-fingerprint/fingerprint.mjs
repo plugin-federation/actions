@@ -3,9 +3,14 @@
  * Compute tool fingerprints matching Nexus material identity:
  * name, description, inputSchema, outputSchema (if present), annotations (if present).
  * Canonicalization: sorted object keys (RFC 8785–compatible for typical JSON Schema).
+ *
+ * Schemas are normalized first (strip FastMCP *Arguments/*Output titles and
+ * single-property result envelopes) so framework noise does not change digests
+ * or judge input.
  */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
+import { normalizeMcpTool } from "./normalize-tool-schema.mjs";
 
 function canonicalize(value) {
   if (value === null || typeof value !== "object") {
@@ -42,6 +47,44 @@ function toolFingerprint(tool) {
   return `sha256:${digest}`;
 }
 
+// Optional self-check: node fingerprint.mjs --self-test
+if (process.argv.includes("--self-test")) {
+  const { normalizeToolJsonSchema } = await import("./normalize-tool-schema.mjs");
+  const cleaned = normalizeToolJsonSchema(
+    {
+      properties: {},
+      title: "list_citiesArguments",
+      type: "object",
+    },
+    "list_cities",
+  );
+  if (cleaned.title) {
+    console.error("self-test failed: title should be stripped");
+    process.exit(1);
+  }
+  const unwrapped = normalizeToolJsonSchema(
+    {
+      properties: {
+        result: { items: { type: "string" }, type: "array", title: "Result" },
+      },
+      required: ["result"],
+      title: "list_citiesOutput",
+      type: "object",
+    },
+    "list_cities",
+  );
+  if (unwrapped.type !== "array" || !unwrapped.items) {
+    console.error("self-test failed: result envelope not unwrapped", unwrapped);
+    process.exit(1);
+  }
+  if (unwrapped.title) {
+    console.error("self-test failed: unwrapped title should be stripped");
+    process.exit(1);
+  }
+  console.log("self-test ok");
+  process.exit(0);
+}
+
 const inputPath = process.env.INPUT_TOOLS_LIST_FILE;
 const outputPath = process.env.INPUT_OUTPUT_FILE || "tool-fingerprints.json";
 if (!inputPath) {
@@ -60,10 +103,11 @@ const items = tools.map((tool) => {
   if (!tool || typeof tool.name !== "string") {
     throw new Error("each tool requires a name");
   }
+  const normalized = normalizeMcpTool(tool);
   return {
-    name: tool.name,
-    toolFingerprint: toolFingerprint(tool),
-    tool,
+    name: normalized.name,
+    toolFingerprint: toolFingerprint(normalized),
+    tool: normalized,
   };
 });
 
