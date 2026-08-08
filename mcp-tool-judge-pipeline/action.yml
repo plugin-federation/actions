@@ -352,14 +352,21 @@ runs:
             | ($lookup[0].analyzed // []
                 | map(select(.name as $n | ($new_names | index($n) | not)))
                 | map(
+                    # Stamp this pipeline run for /checks aggregation, but keep the
+                    # original judge opinion/report so Console evidence stays useful.
                     {
                       name: .name,
                       toolFingerprint: .toolFingerprint,
                       outcome: .outcome,
-                      summary: "Reused from Nexus analysis cache for this pipeline run",
                       source: pipeline_source
                     }
                     + (if .score != null then { score: .score } else {} end)
+                    + (if (.summary != null and .summary != "") then { summary: .summary }
+                       else { summary: "Reused from Nexus analysis cache for this pipeline run (original opinion unavailable from lookup)" }
+                       end)
+                    + (if .report != null then { report: .report } else {} end)
+                    + (if .provider != null and .provider != "" then { provider: .provider } else {} end)
+                    + (if .model != null and .model != "" then { model: .model } else {} end)
                   )
               ) as $stamped
             | {
