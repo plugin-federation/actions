@@ -49,7 +49,9 @@ function toolFingerprint(tool) {
 
 // Optional self-check: node fingerprint.mjs --self-test
 if (process.argv.includes("--self-test")) {
-  const { normalizeToolJsonSchema } = await import("./normalize-tool-schema.mjs");
+  const { normalizeToolJsonSchema, normalizeMcpTool } = await import(
+    "./normalize-tool-schema.mjs"
+  );
   const cleaned = normalizeToolJsonSchema(
     {
       properties: {},
@@ -62,7 +64,12 @@ if (process.argv.includes("--self-test")) {
     console.error("self-test failed: title should be stripped");
     process.exit(1);
   }
-  const unwrapped = normalizeToolJsonSchema(
+  if (cleaned.type !== "object") {
+    console.error("self-test failed: input must stay object");
+    process.exit(1);
+  }
+  // MCP requires outputSchema.type === "object" — keep FastMCP result envelope.
+  const out = normalizeToolJsonSchema(
     {
       properties: {
         result: { items: { type: "string" }, type: "array", title: "Result" },
@@ -73,12 +80,22 @@ if (process.argv.includes("--self-test")) {
     },
     "list_cities",
   );
-  if (unwrapped.type !== "array" || !unwrapped.items) {
-    console.error("self-test failed: result envelope not unwrapped", unwrapped);
+  if (out.type !== "object" || !out.properties?.result) {
+    console.error("self-test failed: must keep object envelope", out);
     process.exit(1);
   }
-  if (unwrapped.title) {
-    console.error("self-test failed: unwrapped title should be stripped");
+  if (out.title) {
+    console.error("self-test failed: generated output title should be stripped");
+    process.exit(1);
+  }
+  // If a bare array is passed, re-wrap for MCP compliance.
+  const tool = normalizeMcpTool({
+    name: "list_cities",
+    inputSchema: { type: "object", properties: {} },
+    outputSchema: { type: "array", items: { type: "string" } },
+  });
+  if (tool.outputSchema.type !== "object" || !tool.outputSchema.properties?.result) {
+    console.error("self-test failed: bare array must re-wrap", tool.outputSchema);
     process.exit(1);
   }
   console.log("self-test ok");

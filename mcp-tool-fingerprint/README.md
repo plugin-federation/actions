@@ -8,8 +8,10 @@ Schemas are **normalized** first so FastMCP/Pydantic noise does not affect diges
 or judges:
 
 - Drop generated `title` values like `list_citiesArguments` / `get_weatherOutput`
-- Unwrap single-property `{ "result": <schema> }` output envelopes
 - Drop trivial property titles (`city` → `"City"`)
+- **Keep** MCP-valid `outputSchema.type: "object"` (including FastMCP
+  `{ "result": <T> }` envelopes). Unwrapping arrays fails PFMTL-TOOL-011 and
+  breaks `$ref` / `$defs`.
 
 Use `normalize-cli.mjs` (or the same module) before catalog record so Nexus and
 Console see the same cleaned shapes.

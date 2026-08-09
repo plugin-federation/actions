@@ -1,13 +1,16 @@
 /**
- * Strip framework-generated MCP tool schema noise before fingerprinting,
- * catalog record, and LLM-as-judge evaluation.
+ * Strip framework-generated MCP tool schema *noise* before fingerprinting,
+ * catalog record, and LLM-as-judge evaluation — without breaking MCP shape.
  *
  * FastMCP / Pydantic commonly emit:
  *   inputSchema:  { type: "object", properties: {...}, title: "list_citiesArguments" }
- *   outputSchema: { type: "object", properties: { result: <actual> }, title: "list_citiesOutput", required: ["result"] }
+ *   outputSchema: { type: "object", properties: { result: <T> }, title: "list_citiesOutput", required: ["result"] }
  *
- * Those titles and the single-property `result` envelope are not part of the
- * MCP tool contract agents see at call time; keeping them pollutes digests and judges.
+ * MCP Streamable HTTP 2025-06-18 (and PFMTL-TOOL-011) require that when
+ * `outputSchema` is present, `outputSchema.type` is `"object"`. Therefore we
+ * **must not** unwrap the FastMCP `{ result: T }` envelope into a bare array/
+ * primitive schema — that fails tools-list-validate and drops `$defs` needed by
+ * `$ref`s. We only strip synthetic `title` fields and trivial property titles.
  */
 
 function isPlainObject(value) {
@@ -26,89 +29,70 @@ export function isGeneratedSchemaTitle(title, toolName) {
   if (title === `${toolName}Arguments`) return true;
   if (title === `${toolName}Output`) return true;
   if (title === `${toolName}DictOutput`) return true;
-  // e.g. get_weatherDictOutput, list_citiesArguments
   const escaped = toolName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^${escaped}(Arguments|Output|DictOutput)$`).test(title);
 }
 
 /**
- * FastMCP wraps non-object returns as { properties: { result: T }, required: ["result"] }.
- */
-export function isResultEnvelope(schema) {
-  if (!isPlainObject(schema) || schema.type !== "object") return false;
-  if (!isPlainObject(schema.properties)) return false;
-  const keys = Object.keys(schema.properties);
-  if (keys.length !== 1 || keys[0] !== "result") return false;
-  const required = schema.required;
-  if (required !== undefined) {
-    if (!Array.isArray(required) || required.length !== 1 || required[0] !== "result") {
-      return false;
-    }
-  }
-  // Only unwrap when the envelope title looks generated or title is absent.
-  if (schema.title && typeof schema.title === "string") {
-    if (
-      !schema.title.endsWith("Output") &&
-      !schema.title.endsWith("DictOutput") &&
-      !schema.title.endsWith("Arguments")
-    ) {
-      // Keep intentional { result: ... } product schemas with a custom title.
-      return false;
-    }
-  }
-  return isPlainObject(schema.properties.result) || Array.isArray(schema.properties.result)
-    ? true
-    : schema.properties.result !== undefined;
-}
-
-/**
  * Normalize a single JSON Schema used as tool inputSchema or outputSchema.
+ * Preserves MCP-valid object shapes (including FastMCP result envelopes).
  */
 export function normalizeToolJsonSchema(schema, toolName) {
   if (schema === undefined || schema === null) return schema;
   if (!isPlainObject(schema)) return schema;
 
-  let current = deepClone(schema);
+  const current = deepClone(schema);
 
-  // Unwrap nested FastMCP result envelopes (usually one level).
-  for (let i = 0; i < 3; i += 1) {
-    if (!isResultEnvelope(current)) break;
-    current = deepClone(current.properties.result);
-    if (!isPlainObject(current)) break;
-  }
-
-  if (isPlainObject(current) && isGeneratedSchemaTitle(current.title, toolName)) {
+  if (isGeneratedSchemaTitle(current.title, toolName)) {
     delete current.title;
   }
-  // Generic Pydantic field title after unwrapping `result`
-  if (isPlainObject(current) && current.title === "Result") {
+  if (current.title === "Result") {
     delete current.title;
   }
 
   // Drop property-level noise titles only when they are the bare capitalized
   // field name (Pydantic default), e.g. city → "City", temp_c → "Temp C".
-  if (isPlainObject(current) && isPlainObject(current.properties)) {
+  if (isPlainObject(current.properties)) {
     for (const [key, prop] of Object.entries(current.properties)) {
-      if (!isPlainObject(prop) || typeof prop.title !== "string") continue;
-      const autoTitle =
-        key.length > 0 ? key.charAt(0).toUpperCase() + key.slice(1) : key;
-      const snakeTitle = key
-        .split("_")
-        .filter(Boolean)
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(" ");
-      if (
-        prop.title === autoTitle ||
-        prop.title === snakeTitle ||
-        prop.title === "Result"
-      ) {
-        delete prop.title;
+      if (!isPlainObject(prop)) continue;
+      if (typeof prop.title === "string") {
+        const autoTitle =
+          key.length > 0 ? key.charAt(0).toUpperCase() + key.slice(1) : key;
+        const snakeTitle = key
+          .split("_")
+          .filter(Boolean)
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(" ");
+        if (
+          prop.title === autoTitle ||
+          prop.title === snakeTitle ||
+          prop.title === "Result"
+        ) {
+          delete prop.title;
+        }
       }
-      // Recurse one level for nested object properties (uncommon).
-      if (isPlainObject(prop.properties)) {
-        const nested = normalizeToolJsonSchema(prop, toolName);
-        current.properties[key] = nested;
+      // Recurse into nested object schemas (not unwrapping).
+      if (isPlainObject(prop.properties) || prop.type === "object") {
+        current.properties[key] = normalizeToolJsonSchema(prop, toolName);
+      } else if (isPlainObject(prop.items)) {
+        prop.items = normalizeToolJsonSchema(prop.items, toolName);
       }
+    }
+  }
+
+  if (isPlainObject(current.items)) {
+    current.items = normalizeToolJsonSchema(current.items, toolName);
+  }
+
+  // Clean $defs titles without removing definitions (needed for $ref).
+  if (isPlainObject(current.$defs)) {
+    for (const [defName, defSchema] of Object.entries(current.$defs)) {
+      current.$defs[defName] = normalizeToolJsonSchema(defSchema, toolName);
+    }
+  }
+  if (isPlainObject(current.definitions)) {
+    for (const [defName, defSchema] of Object.entries(current.definitions)) {
+      current.definitions[defName] = normalizeToolJsonSchema(defSchema, toolName);
     }
   }
 
@@ -137,7 +121,18 @@ export function normalizeMcpTool(tool) {
       delete next.outputSchema;
       delete next.output_schema;
     } else {
-      next.outputSchema = cleaned;
+      // Guard: never emit a non-object outputSchema root (MCP / PFMTL-TOOL-011).
+      if (isPlainObject(cleaned) && cleaned.type && cleaned.type !== "object") {
+        // Re-wrap primitive/array return types into a FastMCP-compatible object
+        // envelope so tools-list-validate still accepts the catalog.
+        next.outputSchema = {
+          type: "object",
+          properties: { result: cleaned },
+          required: ["result"],
+        };
+      } else {
+        next.outputSchema = cleaned;
+      }
       delete next.output_schema;
     }
   }
