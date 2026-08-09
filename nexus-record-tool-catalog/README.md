@@ -4,7 +4,7 @@ POST an MCP `tools/list` snapshot to Nexus as an immutable tool catalog:
 
 `POST /api/v1/tenants/{tenantId}/tool-sources/{sourceId}/catalogs`
 
-Maps file shape `{ "tools": [ { name, description, inputSchema, ... } ] }` to
+Maps file shape `{ "tools": [ { name, description, inputSchema, outputSchema?, ... } ] }` to
 the Nexus `tool-catalog` contract (strips non-contract fields such as
 `outputSchema`).
 

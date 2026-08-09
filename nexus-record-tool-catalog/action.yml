@@ -131,6 +131,7 @@ runs:
           --output "${RUNNER_TEMP}/tools-list-normalized.json"
 
         # Map MCP tools/list → Nexus tool-catalog (contract fields only).
+        # Include optional outputSchema so Console catalog evidence matches judges.
         jq \
           --arg sourceId "$SOURCE_ID" \
           --arg sourceVersion "$SOURCE_VERSION" \
@@ -145,6 +146,9 @@ runs:
                   description: (.description // ""),
                   inputSchema: (.inputSchema // .input_schema // {})
                 }
+                + (if (.outputSchema // .output_schema) then
+                    { outputSchema: (.outputSchema // .output_schema) }
+                   else {} end)
                 + (if .annotations then {annotations: .annotations} else {} end)
             ]
           }' \
