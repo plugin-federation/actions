@@ -176,21 +176,58 @@ runs:
 
     - name: Upload evaluation report
       if: always()
+      id: upload
       uses: actions/upload-artifact@v4
       with:
         name: eval-report-${{ steps.dirname.outputs.name }}
         path: evaluation_report.md
         retention-days: 30
+        if-no-files-found: warn
+
+    - name: Publish evaluation report links
+      if: always()
+      shell: bash
+      env:
+        ARTIFACT_NAME: eval-report-${{ steps.dirname.outputs.name }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set -euo pipefail
+        if [[ ! -f evaluation_report.md ]]; then
+          echo "::warning::evaluation_report.md was not produced"
+          exit 0
+        fi
+
+        # Job Summary is the durable, visible place for the report on PR checks.
+        if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+          {
+            echo "## MCP functional evaluation report"
+            echo
+            echo "- **Workflow run:** [open run](${RUN_URL})"
+            echo "- **Artifact:** \`${ARTIFACT_NAME}\` (download from the run's **Artifacts** section)"
+            echo
+            cat evaluation_report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        echo "::notice title=Evaluation report::See Job Summary for the full report; artifact ${ARTIFACT_NAME} on ${RUN_URL}"
+        echo "Report file: $(pwd)/evaluation_report.md"
+        echo "Artifact name: ${ARTIFACT_NAME}"
+        echo "Run: ${RUN_URL}"
 
     - name: Check accuracy
+      if: always()
       id: check
       shell: bash
       run: |
-        cat evaluation_report.md
+        set -euo pipefail
+        if [[ ! -f evaluation_report.md ]]; then
+          echo "::error::evaluation_report.md missing; cannot check accuracy"
+          exit 1
+        fi
         # Extract the accuracy percentage from the report line like:
         # - **Accuracy**: 8/8 (100.0%)
         # We need the number inside the parentheses, not the count before the slash.
-        accuracy_line=$(grep '\*\*Accuracy\*\*:' evaluation_report.md | head -1)
+        accuracy_line=$(grep '\*\*Accuracy\*\*:' evaluation_report.md | head -1 || true)
         accuracy=$(echo "$accuracy_line" | sed -n 's/.*(\([0-9]*\.[0-9]*\)%).*/\1/p')
         # If sed didn't match (e.g. integer percentage), try without decimal
         if [ -z "$accuracy" ]; then
@@ -199,9 +236,18 @@ runs:
         if [ -z "$accuracy" ]; then
           accuracy=0
         fi
-        echo "accuracy=$accuracy" >> $GITHUB_OUTPUT
+        echo "accuracy=$accuracy" >> "$GITHUB_OUTPUT"
         threshold=${{ inputs.accuracy-threshold }}
-        if (( $(echo "$accuracy < $threshold" | bc -l) )); then
-          echo "::error::Evaluation failed: ${accuracy}% accuracy (threshold: ${threshold}%)"
+        echo "Accuracy: ${accuracy}% (threshold: ${threshold}%)"
+        if ! command -v bc >/dev/null 2>&1; then
+          # Fallback without bc: integer compare
+          acc_int=${accuracy%.*}
+          thr_int=${threshold%.*}
+          if [ "$acc_int" -lt "$thr_int" ]; then
+            echo "::error::Evaluation failed: ${accuracy}% accuracy (threshold: ${threshold}%). Full report is in the Job Summary and artifact eval-report-*"
+            exit 1
+          fi
+        elif (( $(echo "$accuracy < $threshold" | bc -l) )); then
+          echo "::error::Evaluation failed: ${accuracy}% accuracy (threshold: ${threshold}%). Full report is in the Job Summary and artifact eval-report-*"
           exit 1
         fi

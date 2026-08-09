@@ -437,8 +437,18 @@ runs:
           } >> "$GITHUB_STEP_SUMMARY"
         fi
 
-        if [[ "$FAIL_ON_FAIL" == "true" && "$FAIL_COUNT" -gt 0 ]]; then
+        if [[ "$FAIL_COUNT" -gt 0 ]]; then
           DETAIL="$(IFS=', '; echo "${FAIL_NAMES[*]}")"
-          echo "::error::${FAIL_COUNT} tool(s) failed LLM judge (score below passThreshold or error): ${DETAIL}"
-          exit 1
+          if [[ -n "${CATALOG_CONSOLE_URL:-}" ]]; then
+            echo "::notice title=Console catalog evidence::${CATALOG_CONSOLE_URL}"
+          fi
+          if [[ "$FAIL_ON_FAIL" == "true" ]]; then
+            echo "::error::${FAIL_COUNT} tool(s) failed LLM judge (score below passThreshold or error): ${DETAIL}"
+            if [[ -n "${CATALOG_CONSOLE_URL:-}" ]]; then
+              echo "::error::Open Console evidence: ${CATALOG_CONSOLE_URL}"
+            fi
+            exit 1
+          else
+            echo "::warning::${FAIL_COUNT} tool(s) failed LLM judge (not failing job; fail-on-judge-fail=false): ${DETAIL}"
+          fi
         fi
