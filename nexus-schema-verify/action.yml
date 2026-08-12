@@ -1,0 +1,333 @@
+name: "Nexus schema verify"
+description: >-
+  POST a schema verification for a recorded tool catalog digest against a
+  plugin draft (or variant) baseline. When baseline-plugin-id is empty, discover
+  plugin drafts that pin the source and verify against each. Emits verificationId
+  for Console deep links and Checks aggregation.
+author: "Plugin Federation"
+branding:
+  icon: git-compare
+  color: purple
+
+inputs:
+  nexus-url:
+    description: >-
+      Nexus base URL. Defaults to production. Use
+      https://api.nonprod.plugin-federation.com for nonprod.
+    required: false
+    default: "https://api.plugin-federation.com"
+  console-url:
+    description: >-
+      Console base URL for deep links. Empty derives from nexus-url
+      (api.* → console.*).
+    required: false
+    default: ""
+  tenant-id:
+    required: true
+  source-id:
+    required: true
+  access-token:
+    description: "Nexus token from nexus-oidc-exchange"
+    required: true
+  catalog-digest:
+    description: "Submitted catalog digest (sha256:…)"
+    required: true
+  baseline-plugin-id:
+    description: >-
+      Plugin UUID for the verification baseline. When empty, discover plugin
+      drafts that pin source-id and verify each.
+    required: false
+    default: ""
+  baseline-mode:
+    description: "draft | variant (default: draft)"
+    required: false
+    default: "draft"
+  baseline-variant:
+    description: "Variant name when baseline-mode is variant (default: main)"
+    required: false
+    default: "main"
+  include-composition-impact:
+    description: "When true, request fan-out compositionImpact (default: true)"
+    required: false
+    default: "true"
+  fail-on-unapproved-changes:
+    description: >-
+      When true, fail the step if any verification status is unapproved_changes.
+      Default false for dogfood (verification is still recorded).
+    required: false
+    default: "false"
+  source-version:
+    description: "Optional sourceVersion query param for Console deep link"
+    required: false
+    default: ""
+
+outputs:
+  verification-id:
+    description: "Primary verificationId (first successful verification)"
+    value: ${{ steps.verify.outputs.verification-id }}
+  status:
+    description: "Primary verification status"
+    value: ${{ steps.verify.outputs.status }}
+  verification-count:
+    description: "Number of schema verifications created"
+    value: ${{ steps.verify.outputs.verification-count }}
+  console-url:
+    description: "Console catalog evidence URL including verificationId when available"
+    value: ${{ steps.verify.outputs.console-url }}
+  http-status:
+    description: "Last HTTP status from schema-verifications POST"
+    value: ${{ steps.verify.outputs.http-status }}
+
+runs:
+  using: composite
+  steps:
+    - name: Schema verify against baseline(s)
+      id: verify
+      shell: bash
+      env:
+        NEXUS_URL: ${{ inputs.nexus-url }}
+        CONSOLE_URL_INPUT: ${{ inputs.console-url }}
+        TENANT_ID: ${{ inputs.tenant-id }}
+        SOURCE_ID: ${{ inputs.source-id }}
+        ACCESS_TOKEN: ${{ inputs.access-token }}
+        CATALOG_DIGEST: ${{ inputs.catalog-digest }}
+        BASELINE_PLUGIN_ID: ${{ inputs.baseline-plugin-id }}
+        BASELINE_MODE: ${{ inputs.baseline-mode }}
+        BASELINE_VARIANT: ${{ inputs.baseline-variant }}
+        INCLUDE_IMPACT: ${{ inputs.include-composition-impact }}
+        FAIL_ON_UNAPPROVED: ${{ inputs.fail-on-unapproved-changes }}
+        SOURCE_VERSION: ${{ inputs.source-version }}
+      run: |
+        set -euo pipefail
+
+        : "${TENANT_ID:?tenant-id is required}"
+        : "${SOURCE_ID:?source-id is required}"
+        : "${ACCESS_TOKEN:?access-token is required}"
+        : "${CATALOG_DIGEST:?catalog-digest is required}"
+
+        if ! command -v jq >/dev/null 2>&1; then
+          echo "::error::jq is required (preinstalled on GitHub-hosted runners)"
+          exit 1
+        fi
+
+        echo "::add-mask::${ACCESS_TOKEN}"
+
+        if [[ -z "${NEXUS_URL:-}" ]]; then
+          NEXUS_URL="https://api.plugin-federation.com"
+        fi
+        NEXUS_URL="${NEXUS_URL%/}"
+        MODE="${BASELINE_MODE:-draft}"
+        VARIANT="${BASELINE_VARIANT:-main}"
+        INCLUDE_IMPACT="${INCLUDE_IMPACT:-true}"
+        FAIL_ON_UNAPPROVED="${FAIL_ON_UNAPPROVED:-false}"
+
+        if [[ "$MODE" != "draft" && "$MODE" != "variant" ]]; then
+          echo "::error::baseline-mode must be draft or variant (got ${MODE})"
+          exit 1
+        fi
+
+        # Resolve Console base for deep links.
+        CONSOLE_BASE="${CONSOLE_URL_INPUT:-}"
+        if [[ -z "$CONSOLE_BASE" ]]; then
+          CONSOLE_BASE="$(printf '%s' "$NEXUS_URL" | sed -E 's#^(https?://)api\.#\1console.#')"
+          if [[ "$CONSOLE_BASE" == "$NEXUS_URL" ]]; then
+            if [[ "$NEXUS_URL" == *"nonprod"* ]]; then
+              CONSOLE_BASE="https://console.nonprod.plugin-federation.com"
+            else
+              CONSOLE_BASE="https://console.plugin-federation.com"
+            fi
+          fi
+        fi
+        CONSOLE_BASE="${CONSOLE_BASE%/}"
+
+        DIGEST_SEG="$(printf '%s' "$CATALOG_DIGEST" | jq -sRr @uri)"
+        SOURCE_SEG="$(printf '%s' "$SOURCE_ID" | jq -sRr @uri)"
+        QUERY="tenantId=$(printf '%s' "$TENANT_ID" | jq -sRr @uri)"
+        if [[ -n "${SOURCE_VERSION:-}" ]]; then
+          QUERY+="&sourceVersion=$(printf '%s' "$SOURCE_VERSION" | jq -sRr @uri)"
+        fi
+
+        # Discover plugin drafts that pin this source when no plugin is specified.
+        PLUGIN_IDS=()
+        if [[ -n "${BASELINE_PLUGIN_ID:-}" ]]; then
+          PLUGIN_IDS+=("$BASELINE_PLUGIN_ID")
+          echo "Using explicit baseline pluginId=${BASELINE_PLUGIN_ID}"
+        else
+          echo "Discovering plugin drafts that pin sourceId=${SOURCE_ID}…"
+          PLUGINS_CODE="$(curl -sS -o "${RUNNER_TEMP}/plugins.json" -w "%{http_code}" \
+            -H "authorization: Bearer ${ACCESS_TOKEN}" \
+            -H "accept: application/json" \
+            -H "x-request-id: gha-${GITHUB_RUN_ID:-0}-list-plugins" \
+            "${NEXUS_URL}/api/v1/tenants/${TENANT_ID}/plugins?pageSize=200")"
+          if [[ "$PLUGINS_CODE" != "200" ]]; then
+            echo "::warning::list plugins failed (HTTP ${PLUGINS_CODE}); cannot auto-discover baselines"
+            cat "${RUNNER_TEMP}/plugins.json" || true
+          else
+            while IFS= read -r plugin_id; do
+              [[ -z "$plugin_id" ]] && continue
+              DRAFT_CODE="$(curl -sS -o "${RUNNER_TEMP}/draft-${plugin_id}.json" -w "%{http_code}" \
+                -H "authorization: Bearer ${ACCESS_TOKEN}" \
+                -H "accept: application/json" \
+                -H "x-request-id: gha-${GITHUB_RUN_ID:-0}-draft-${plugin_id}" \
+                "${NEXUS_URL}/api/v1/tenants/${TENANT_ID}/plugins/${plugin_id}/draft")"
+              if [[ "$DRAFT_CODE" != "200" ]]; then
+                echo "Skip plugin ${plugin_id}: draft GET HTTP ${DRAFT_CODE}"
+                continue
+              fi
+              PINNED="$(jq -r --arg sid "$SOURCE_ID" '
+                [.definition.toolSources // [] | .[] | (.id // .sourceId // empty)]
+                | index($sid) // empty
+              ' "${RUNNER_TEMP}/draft-${plugin_id}.json")"
+              if [[ -n "$PINNED" ]]; then
+                PLUGIN_IDS+=("$plugin_id")
+                echo "  pinned by plugin ${plugin_id}"
+              fi
+            done < <(jq -r '.items[]?.pluginId // empty' "${RUNNER_TEMP}/plugins.json")
+          fi
+        fi
+
+        if [[ "${#PLUGIN_IDS[@]}" -eq 0 ]]; then
+          echo "::warning::No plugin baseline found for sourceId=${SOURCE_ID}. Schema verification skipped — Checks will show no verificationId until a plugin draft pins this MCP server and this step runs again."
+          CONSOLE_LINK="${CONSOLE_BASE}/mcp-servers/${SOURCE_SEG}/catalogs/${DIGEST_SEG}?${QUERY}"
+          {
+            echo "verification-id="
+            echo "status="
+            echo "verification-count=0"
+            echo "console-url=${CONSOLE_LINK}"
+            echo "http-status=0"
+          } >> "$GITHUB_OUTPUT"
+          echo "Console: ${CONSOLE_LINK}"
+          exit 0
+        fi
+
+        PRIMARY_VID=""
+        PRIMARY_STATUS=""
+        LAST_HTTP=0
+        COUNT=0
+        UNAPPROVED=0
+        SUMMARY_ROWS="${RUNNER_TEMP}/schema-verify-rows.tsv"
+        : > "$SUMMARY_ROWS"
+
+        for plugin_id in "${PLUGIN_IDS[@]}"; do
+          if [[ "$MODE" == "variant" ]]; then
+            BASELINE_JSON="$(jq -n \
+              --arg pluginId "$plugin_id" \
+              --arg variant "$VARIANT" \
+              '{mode:"variant", pluginId:$pluginId, variant:$variant}')"
+          else
+            BASELINE_JSON="$(jq -n \
+              --arg pluginId "$plugin_id" \
+              '{mode:"draft", pluginId:$pluginId}')"
+          fi
+
+          INCLUDE_IMPACT_BOOL=true
+          if [[ "$INCLUDE_IMPACT" != "true" ]]; then
+            INCLUDE_IMPACT_BOOL=false
+          fi
+
+          jq -n \
+            --arg catalogDigest "$CATALOG_DIGEST" \
+            --argjson baseline "$BASELINE_JSON" \
+            --argjson includeImpact "$INCLUDE_IMPACT_BOOL" \
+            '{
+              catalogDigest: $catalogDigest,
+              baseline: $baseline,
+              includeCompositionImpact: $includeImpact,
+              includeCompatibilityProfiles: []
+            }' > "${RUNNER_TEMP}/verify-body-${plugin_id}.json"
+
+          IDEMPOTENCY_KEY="schema-verify-${SOURCE_ID}-${CATALOG_DIGEST}-${plugin_id}-${MODE}-${VARIANT}-${GITHUB_RUN_ID:-0}"
+          # Idempotency key max 255; digests are long — hash when needed.
+          if [[ "${#IDEMPOTENCY_KEY}" -gt 255 ]]; then
+            IDEMPOTENCY_KEY="schema-verify-$(printf '%s' "$IDEMPOTENCY_KEY" | sha256sum | awk '{print $1}')"
+          fi
+
+          HTTP_CODE="$(curl -sS -o "${RUNNER_TEMP}/verify-${plugin_id}.json" -w "%{http_code}" \
+            -X POST "${NEXUS_URL}/api/v1/tenants/${TENANT_ID}/tool-sources/${SOURCE_ID}/schema-verifications" \
+            -H "authorization: Bearer ${ACCESS_TOKEN}" \
+            -H "content-type: application/json" \
+            -H "accept: application/json" \
+            -H "idempotency-key: ${IDEMPOTENCY_KEY}" \
+            -H "x-request-id: gha-${GITHUB_RUN_ID:-0}-schema-verify-${COUNT}" \
+            --data-binary @"${RUNNER_TEMP}/verify-body-${plugin_id}.json")"
+
+          LAST_HTTP="$HTTP_CODE"
+          echo "Schema verification POST for plugin ${plugin_id}: HTTP ${HTTP_CODE}"
+          cat "${RUNNER_TEMP}/verify-${plugin_id}.json" || true
+          echo
+
+          if [[ "$HTTP_CODE" != "201" && "$HTTP_CODE" != "200" ]]; then
+            DETAIL="$(jq -r '.detail // .title // empty' "${RUNNER_TEMP}/verify-${plugin_id}.json" 2>/dev/null || true)"
+            echo "::warning::schema verification failed for plugin ${plugin_id} (HTTP ${HTTP_CODE})${DETAIL:+: ${DETAIL}}"
+            printf '%s\t%s\t%s\t%s\n' "$plugin_id" "error" "" "HTTP ${HTTP_CODE}" >> "$SUMMARY_ROWS"
+            continue
+          fi
+
+          VID="$(jq -r '.verificationId // empty' "${RUNNER_TEMP}/verify-${plugin_id}.json")"
+          STATUS="$(jq -r '.status // empty' "${RUNNER_TEMP}/verify-${plugin_id}.json")"
+          COUNT=$((COUNT + 1))
+          printf '%s\t%s\t%s\t%s\n' "$plugin_id" "$STATUS" "$VID" "ok" >> "$SUMMARY_ROWS"
+
+          if [[ -z "$PRIMARY_VID" && -n "$VID" ]]; then
+            PRIMARY_VID="$VID"
+            PRIMARY_STATUS="$STATUS"
+          fi
+          if [[ "$STATUS" == "unapproved_changes" ]]; then
+            UNAPPROVED=$((UNAPPROVED + 1))
+          fi
+          echo "::notice title=Schema verification ${STATUS}::plugin=${plugin_id} verificationId=${VID}"
+        done
+
+        CONSOLE_LINK="${CONSOLE_BASE}/mcp-servers/${SOURCE_SEG}/catalogs/${DIGEST_SEG}?${QUERY}"
+        if [[ -n "$PRIMARY_VID" ]]; then
+          CONSOLE_LINK+="&verificationId=$(printf '%s' "$PRIMARY_VID" | jq -sRr @uri)"
+        fi
+
+        {
+          echo "verification-id=${PRIMARY_VID}"
+          echo "status=${PRIMARY_STATUS}"
+          echo "verification-count=${COUNT}"
+          echo "console-url=${CONSOLE_LINK}"
+          echo "http-status=${LAST_HTTP}"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "======== Schema verification ========"
+        printf '%-38s %-20s %s\n' "PLUGIN" "STATUS" "VERIFICATION_ID"
+        while IFS=$'\t' read -r plugin status vid note; do
+          printf '%-38s %-20s %s\n' "$plugin" "$status" "${vid:-$note}"
+        done < "$SUMMARY_ROWS"
+        echo "====================================="
+        echo "Console: ${CONSOLE_LINK}"
+
+        if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+          {
+            echo "## Schema verification"
+            echo
+            echo "- **Catalog digest:** \`${CATALOG_DIGEST}\`"
+            echo "- **Primary verificationId:** \`${PRIMARY_VID:-—}\`"
+            echo "- **Primary status:** \`${PRIMARY_STATUS:-—}\`"
+            echo "- **Verifications created:** ${COUNT}"
+            echo
+            echo "| Plugin | Status | Verification ID |"
+            echo "| --- | --- | --- |"
+            while IFS=$'\t' read -r plugin status vid note; do
+              echo "| \`${plugin}\` | **${status}** | \`${vid:-$note}\` |"
+            done < "$SUMMARY_ROWS"
+            echo
+            if [[ -n "$PRIMARY_VID" ]]; then
+              echo "**[Open in Console — catalog evidence with verification](${CONSOLE_LINK})**"
+            else
+              echo "**[Open in Console — catalog evidence](${CONSOLE_LINK})**"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        if [[ "$COUNT" -eq 0 ]]; then
+          echo "::warning::No schema verifications were recorded (all POSTs failed or no baselines)."
+          exit 0
+        fi
+
+        if [[ "$FAIL_ON_UNAPPROVED" == "true" && "$UNAPPROVED" -gt 0 ]]; then
+          echo "::error::${UNAPPROVED} schema verification(s) reported unapproved_changes"
+          exit 1
+        fi

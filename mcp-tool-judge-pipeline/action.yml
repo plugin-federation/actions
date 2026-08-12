@@ -68,6 +68,33 @@ inputs:
     description: "Provider for embeddings (openai | xai | azure_openai | other)"
     required: false
     default: "openai"
+  schema-verify:
+    description: >-
+      When true (default), POST schema-verifications for the recorded catalog
+      digest so Console Checks can link a verificationId. Discovers plugin
+      drafts that pin the source unless baseline-plugin-id is set.
+    required: false
+    default: "true"
+  baseline-plugin-id:
+    description: >-
+      Optional plugin UUID for schema verification baseline. Empty = discover
+      drafts that pin source-id.
+    required: false
+    default: ""
+  baseline-mode:
+    description: "Schema verification baseline mode: draft | variant"
+    required: false
+    default: "draft"
+  baseline-variant:
+    description: "Variant name when baseline-mode is variant"
+    required: false
+    default: "main"
+  fail-on-unapproved-schema:
+    description: >-
+      When true, fail the pipeline if schema verification returns
+      unapproved_changes. Default false (record verification, keep dogfood green).
+    required: false
+    default: "false"
 
 outputs:
   fingerprints-file:
@@ -81,8 +108,14 @@ outputs:
     description: "Content-addressed catalog digest (from record step or input)"
     value: ${{ steps.digest.outputs.catalog-digest }}
   catalog-console-url:
-    description: "Console deep link for catalog evidence when catalog was recorded"
-    value: ${{ steps.catalog.outputs.console-url }}
+    description: "Console deep link for catalog evidence (includes verificationId when available)"
+    value: ${{ steps.console.outputs.catalog-console-url }}
+  verification-id:
+    description: "Primary schema verificationId when schema-verify ran"
+    value: ${{ steps.schema.outputs.verification-id }}
+  verification-status:
+    description: "Primary schema verification status"
+    value: ${{ steps.schema.outputs.status }}
   source-version:
     value: ${{ steps.catalog.outputs.source-version }}
 
@@ -126,6 +159,52 @@ runs:
           echo "Using catalogDigest=${DIGEST}"
         else
           echo "No catalogDigest (analyses will omit it)"
+        fi
+
+    # Schema verification creates schema_verifications rows so Console Checks
+    # can join verificationId by sourceId + submittedCatalogDigest.
+    - name: Schema verify catalog against plugin baseline(s)
+      id: schema
+      if: ${{ inputs.schema-verify == 'true' && steps.digest.outputs.catalog-digest != '' }}
+      uses: plugin-federation/actions/nexus-schema-verify@main
+      with:
+        nexus-url: ${{ inputs.nexus-url }}
+        console-url: ${{ inputs.console-url }}
+        tenant-id: ${{ inputs.tenant-id }}
+        source-id: ${{ inputs.source-id }}
+        access-token: ${{ inputs.access-token }}
+        catalog-digest: ${{ steps.digest.outputs.catalog-digest }}
+        baseline-plugin-id: ${{ inputs.baseline-plugin-id }}
+        baseline-mode: ${{ inputs.baseline-mode }}
+        baseline-variant: ${{ inputs.baseline-variant }}
+        fail-on-unapproved-changes: ${{ inputs.fail-on-unapproved-schema }}
+        source-version: ${{ steps.catalog.outputs.source-version || inputs.source-version }}
+
+    - name: Resolve Console catalog evidence URL
+      id: console
+      shell: bash
+      env:
+        FROM_SCHEMA: ${{ steps.schema.outputs.console-url }}
+        FROM_CATALOG: ${{ steps.catalog.outputs.console-url }}
+        VERIFICATION_ID: ${{ steps.schema.outputs.verification-id }}
+      run: |
+        set -euo pipefail
+        URL="${FROM_SCHEMA:-}"
+        if [[ -z "$URL" ]]; then
+          URL="${FROM_CATALOG:-}"
+        fi
+        # If schema step did not run / produced no URL, append verificationId
+        # to the catalog deep link when present.
+        if [[ -n "$URL" && -n "${VERIFICATION_ID:-}" && "$URL" != *"verificationId="* ]]; then
+          if [[ "$URL" == *"?"* ]]; then
+            URL="${URL}&verificationId=$(printf '%s' "$VERIFICATION_ID" | jq -sRr @uri)"
+          else
+            URL="${URL}?verificationId=$(printf '%s' "$VERIFICATION_ID" | jq -sRr @uri)"
+          fi
+        fi
+        echo "catalog-console-url=${URL}" >> "$GITHUB_OUTPUT"
+        if [[ -n "$URL" ]]; then
+          echo "Console evidence: ${URL}"
         fi
 
     - name: Embed tools (name + description)
@@ -210,7 +289,7 @@ runs:
         SOURCE_ID: ${{ inputs.source-id }}
         ACCESS_TOKEN: ${{ inputs.access-token }}
         CATALOG_DIGEST: ${{ steps.digest.outputs.catalog-digest }}
-        CATALOG_CONSOLE_URL: ${{ steps.catalog.outputs.console-url }}
+        CATALOG_CONSOLE_URL: ${{ steps.console.outputs.catalog-console-url || steps.catalog.outputs.console-url }}
         FORCE_RERUN: ${{ inputs.force-rerun }}
         FAIL_ON_FAIL: ${{ inputs.fail-on-judge-fail }}
         FP_FILE: ${{ steps.fp.outputs.output-file }}

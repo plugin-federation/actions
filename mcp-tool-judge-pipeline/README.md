@@ -3,12 +3,16 @@
 End-to-end CI step for an MCP `tools/list`:
 
 1. **Record tool catalog** in Nexus (immutable snapshot + Console deep link)
-2. Optionally **embed tools** (`embedding-model`) — name + description only,
+2. **Schema verify** the catalog digest against plugin draft baselines
+   (`nexus-schema-verify`, default on) so Console Checks can join a
+   `verificationId`. Discovers drafts that pin the source unless
+   `baseline-plugin-id` is set. Skips with a warning when nothing pins the source.
+3. Optionally **embed tools** (`embedding-model`) — name + description only,
    memoized separately so schema-only changes do not re-embed
-3. Load **judge definitions** from Nexus (system prompts + `passThreshold`)
-4. Fingerprint tools, look up **pending** tools per judge
-5. Run the **LLM in GitHub Actions** with CI secrets
-6. **Record assessments** (score 0–100, derived pass/fail, report) back to Nexus,
+4. Load **judge definitions** from Nexus (system prompts + `passThreshold`)
+5. Fingerprint tools, look up **pending** tools per judge
+6. Run the **LLM in GitHub Actions** with CI secrets
+7. **Record assessments** (score 0–100, derived pass/fail, report) back to Nexus,
    including **cache stamps** for tools that did not re-run so Console `/checks`
    can group this GitHub Actions `runId` (checks only list runs that posted
    analyses with `source.runId`). Stamped cache hits **copy the prior
@@ -63,7 +67,11 @@ permissions:
     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-Outputs include `catalog-digest` and `catalog-console-url` for job summaries.
+Outputs include `catalog-digest`, `catalog-console-url` (with `verificationId`
+when schema verify succeeded), `verification-id`, and `verification-status`.
+
+Disable schema verify with `schema-verify: "false"`. Fail CI on material schema
+changes with `fail-on-unapproved-schema: "true"`.
 
 ### Catalog only (no LLM)
 
