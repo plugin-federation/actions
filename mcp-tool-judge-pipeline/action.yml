@@ -98,26 +98,26 @@ inputs:
 
 outputs:
   fingerprints-file:
-    value: ${{ steps.fp.outputs.output-file }}
+    value: ${{ steps.fp.outputs['output-file'] }}
   judges-file:
-    value: ${{ steps.judges.outputs.output-file }}
+    value: ${{ steps.judges.outputs['output-file'] }}
   embeddings-file:
     description: "Path to embeddings JSON when embedding-model is set"
-    value: ${{ steps.embed.outputs.output-file }}
+    value: ${{ steps.embed.outputs['output-file'] }}
   catalog-digest:
     description: "Content-addressed catalog digest (from record step or input)"
-    value: ${{ steps.digest.outputs.catalog-digest }}
+    value: ${{ steps.digest.outputs['catalog-digest'] }}
   catalog-console-url:
     description: "Console deep link for catalog evidence (includes verificationId when available)"
-    value: ${{ steps.console.outputs.catalog-console-url }}
+    value: ${{ steps.console.outputs['catalog-console-url'] }}
   verification-id:
     description: "Primary schema verificationId when schema-verify ran"
-    value: ${{ steps.schema.outputs.verification-id }}
+    value: ${{ steps.schema.outputs['verification-id'] }}
   verification-status:
     description: "Primary schema verification status"
     value: ${{ steps.schema.outputs.status }}
   source-version:
-    value: ${{ steps.catalog.outputs.source-version }}
+    value: ${{ steps.catalog.outputs['source-version'] }}
 
 runs:
   using: composite
@@ -141,7 +141,7 @@ runs:
       id: digest
       shell: bash
       env:
-        RECORDED: ${{ steps.catalog.outputs.catalog-digest }}
+        RECORDED: ${{ steps.catalog.outputs['catalog-digest'] }}
         OVERRIDE: ${{ inputs.catalog-digest }}
         RECORD_CATALOG: ${{ inputs.record-catalog }}
       run: |
@@ -165,7 +165,7 @@ runs:
     # can join verificationId by sourceId + submittedCatalogDigest.
     - name: Schema verify catalog against plugin baseline(s)
       id: schema
-      if: ${{ inputs.schema-verify == 'true' && steps.digest.outputs.catalog-digest != '' }}
+      if: ${{ inputs.schema-verify == 'true' && steps.digest.outputs['catalog-digest'] != '' }}
       uses: plugin-federation/actions/nexus-schema-verify@main
       with:
         nexus-url: ${{ inputs.nexus-url }}
@@ -173,20 +173,20 @@ runs:
         tenant-id: ${{ inputs.tenant-id }}
         source-id: ${{ inputs.source-id }}
         access-token: ${{ inputs.access-token }}
-        catalog-digest: ${{ steps.digest.outputs.catalog-digest }}
+        catalog-digest: ${{ steps.digest.outputs['catalog-digest'] }}
         baseline-plugin-id: ${{ inputs.baseline-plugin-id }}
         baseline-mode: ${{ inputs.baseline-mode }}
         baseline-variant: ${{ inputs.baseline-variant }}
         fail-on-unapproved-changes: ${{ inputs.fail-on-unapproved-schema }}
-        source-version: ${{ steps.catalog.outputs.source-version || inputs.source-version }}
+        source-version: ${{ steps.catalog.outputs['source-version'] || inputs.source-version }}
 
     - name: Resolve Console catalog evidence URL
       id: console
       shell: bash
       env:
-        FROM_SCHEMA: ${{ steps.schema.outputs.console-url }}
-        FROM_CATALOG: ${{ steps.catalog.outputs.console-url }}
-        VERIFICATION_ID: ${{ steps.schema.outputs.verification-id }}
+        FROM_SCHEMA: ${{ steps.schema.outputs['console-url'] }}
+        FROM_CATALOG: ${{ steps.catalog.outputs['console-url'] }}
+        VERIFICATION_ID: ${{ steps.schema.outputs['verification-id'] }}
       run: |
         set -euo pipefail
         URL="${FROM_SCHEMA:-}"
@@ -222,7 +222,7 @@ runs:
         INPUT_TENANT_ID: ${{ inputs.tenant-id }}
         INPUT_SOURCE_ID: ${{ inputs.source-id }}
         INPUT_ACCESS_TOKEN: ${{ inputs.access-token }}
-        INPUT_CATALOG_DIGEST: ${{ steps.digest.outputs.catalog-digest }}
+        INPUT_CATALOG_DIGEST: ${{ steps.digest.outputs['catalog-digest'] }}
         INPUT_JUDGE_ID: tool-embedding
       run: |
         set -euo pipefail
@@ -289,12 +289,12 @@ runs:
         TENANT_ID: ${{ inputs.tenant-id }}
         SOURCE_ID: ${{ inputs.source-id }}
         ACCESS_TOKEN: ${{ inputs.access-token }}
-        CATALOG_DIGEST: ${{ steps.digest.outputs.catalog-digest }}
-        CATALOG_CONSOLE_URL: ${{ steps.console.outputs.catalog-console-url || steps.catalog.outputs.console-url }}
+        CATALOG_DIGEST: ${{ steps.digest.outputs['catalog-digest'] }}
+        CATALOG_CONSOLE_URL: ${{ steps.console.outputs['catalog-console-url'] || steps.catalog.outputs['console-url'] }}
         FORCE_RERUN: ${{ inputs.force-rerun }}
         FAIL_ON_FAIL: ${{ inputs.fail-on-judge-fail }}
-        FP_FILE: ${{ steps.fp.outputs.output-file }}
-        JUDGES_FILE: ${{ steps.judges.outputs.output-file }}
+        FP_FILE: ${{ steps.fp.outputs['output-file'] }}
+        JUDGES_FILE: ${{ steps.judges.outputs['output-file'] }}
       run: |
         set -euo pipefail
         echo "::add-mask::${ACCESS_TOKEN}"
