@@ -1,9 +1,8 @@
 name: "MCP tool embed"
 description: >-
   Compute vector embeddings for MCP tools using an embedding model.
-  Input text is tool name + description only. When Nexus credentials are
-  provided, results are memoized under synthetic judge tool-embedding so
-  tools are re-embedded only when name or description change (not schema).
+  Input text is the model-visible tool name, description, and input schema.
+  Nexus memoization uses the full tool fingerprint.
 author: "Plugin Federation"
 branding:
   icon: database
@@ -82,7 +81,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Embed tools (name + description)
+    - name: Embed tools (selection surface)
       id: run
       shell: bash
       env:

@@ -97,6 +97,7 @@ runs:
         INCLUDE_IMPACT: ${{ inputs.include-composition-impact }}
         FAIL_ON_UNAPPROVED: ${{ inputs.fail-on-unapproved-changes }}
         SOURCE_VERSION: ${{ inputs.source-version }}
+        PULL_REQUEST_URL: ${{ github.event.pull_request.html_url }}
       run: |
         set -euo pipefail
 
@@ -225,15 +226,36 @@ runs:
             INCLUDE_IMPACT_BOOL=false
           fi
 
+          RUN_URL=""
+          if [[ -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
+            RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          fi
+          PR_URL="${PULL_REQUEST_URL:-}"
+          if [[ -z "$PR_URL" && "${GITHUB_REF:-}" =~ ^refs/pull/([0-9]+)/ ]]; then
+            PR_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/pull/${BASH_REMATCH[1]}"
+          fi
           jq -n \
             --arg catalogDigest "$CATALOG_DIGEST" \
             --argjson baseline "$BASELINE_JSON" \
             --argjson includeImpact "$INCLUDE_IMPACT_BOOL" \
+            --arg runUrl "$RUN_URL" \
+            --arg runId "${GITHUB_RUN_ID:-}" \
+            --arg sha "${GITHUB_SHA:-}" \
+            --arg repositoryId "${GITHUB_REPOSITORY_ID:-}" \
+            --arg pullRequestUrl "$PR_URL" \
             '{
               catalogDigest: $catalogDigest,
               baseline: $baseline,
               includeCompositionImpact: $includeImpact,
-              includeCompatibilityProfiles: []
+              includeCompatibilityProfiles: [],
+              source: (
+                { kind: "github_actions" }
+                + (if $runUrl != "" then { runUrl: $runUrl } else {} end)
+                + (if $runId != "" then { runId: $runId } else {} end)
+                + (if $sha != "" then { sha: $sha } else {} end)
+                + (if $repositoryId != "" then { repositoryId: $repositoryId } else {} end)
+                + (if $pullRequestUrl != "" then { pullRequestUrl: $pullRequestUrl } else {} end)
+              )
             }' > "${RUNNER_TEMP}/verify-body-${plugin_id}.json"
 
           IDEMPOTENCY_KEY="schema-verify-${SOURCE_ID}-${CATALOG_DIGEST}-${plugin_id}-${MODE}-${VARIANT}-${GITHUB_RUN_ID:-0}"

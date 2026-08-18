@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 /**
- * Embed MCP tools (name + description only) via an OpenAI-compatible
+ * Embed MCP tools (name + description + input schema) via an OpenAI-compatible
  * /embeddings API. Memoize with Nexus tool-analyses using a synthetic judge:
  *
  *   judgeId      = tool-embedding (or INPUT_JUDGE_ID)
  *   judgeVersion = embedding model id
- *   toolFingerprint = sha256 over { name, description } only
- *
- * Schema / annotation changes do not re-trigger embeddings.
+ *   toolFingerprint = Nexus-compatible full tool identity
  *
  * Env:
  *   INPUT_TOOLS_LIST_FILE (required)
@@ -22,8 +20,9 @@
  *   PROVIDER_API_KEY / OPENAI_API_KEY / XAI_API_KEY / AZURE_API_KEY
  *   PROVIDER_API_BASE / OPENAI_API_BASE / XAI_API_BASE / AZURE_API_BASE
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
+import { normalizeMcpTool } from "../mcp-tool-fingerprint/normalize-tool-schema.mjs";
 
 const RESERVED_JUDGE_ID = "tool-embedding";
 
@@ -44,12 +43,20 @@ function canonicalize(value) {
     .join(",")}}`;
 }
 
-/** Fingerprint material for embeddings: name + description only. */
+/** Keep embedding cache identity aligned with Nexus tool fingerprints. */
 function embeddingMaterial(tool) {
-  return {
+  const material = {
     name: typeof tool?.name === "string" ? tool.name : "",
     description: typeof tool?.description === "string" ? tool.description : "",
+    inputSchema: tool?.inputSchema ?? {},
   };
+  if (tool?.outputSchema !== undefined && tool.outputSchema !== null) {
+    material.outputSchema = tool.outputSchema;
+  }
+  if (tool?.annotations !== undefined && tool.annotations !== null) {
+    material.annotations = tool.annotations;
+  }
+  return material;
 }
 
 function embeddingFingerprint(tool) {
@@ -62,10 +69,15 @@ function buildEmbeddingInput(tool) {
   const name = typeof tool?.name === "string" ? tool.name.trim() : "";
   const description =
     typeof tool?.description === "string" ? tool.description.trim() : "";
-  if (description) {
-    return `Tool name: ${name}\nDescription: ${description}`;
-  }
-  return `Tool name: ${name}`;
+  return [
+    `Tool name: ${name}`,
+    description ? `Description: ${description}` : "Description: (none)",
+    `Input schema: ${canonicalize(tool?.inputSchema ?? {})}`,
+  ].join("\n");
+}
+
+function inputDigest(inputText) {
+  return `sha256:${createHash("sha256").update(inputText, "utf8").digest("hex")}`;
 }
 
 function resolveCredentials(providerHint) {
@@ -205,6 +217,14 @@ async function nexusListAnalyses({ nexusUrl, tenantId, sourceId, accessToken, li
 
 function pickEmbeddingFromReport(report) {
   if (!report || typeof report !== "object") return null;
+  const facets = report.facets;
+  if (facets && typeof facets === "object") {
+    for (const value of Object.values(facets)) {
+      if (Array.isArray(value) && value.length > 0 && value.every((n) => typeof n === "number" && Number.isFinite(n))) {
+        return value;
+      }
+    }
+  }
   for (const key of ["toolEmbedding", "embedding", "embeddingVector", "vector"]) {
     const value = report[key];
     if (Array.isArray(value) && value.length > 0 && value.every((n) => typeof n === "number")) {
@@ -268,15 +288,18 @@ if (!tools) {
   process.exit(1);
 }
 
-const prepared = tools.map((tool) => {
+const prepared = tools.map((rawTool) => {
+  const tool = normalizeMcpTool(rawTool);
   if (!tool || typeof tool.name !== "string" || !tool.name) {
     throw new Error("each tool requires a name");
   }
+  const inputText = buildEmbeddingInput(tool);
   return {
     name: tool.name,
     tool,
     toolFingerprint: embeddingFingerprint(tool),
-    inputText: buildEmbeddingInput(tool),
+    inputText,
+    inputDigest: inputDigest(inputText),
   };
 });
 
@@ -284,7 +307,7 @@ const judgeVersion = model;
 
 console.log(
   `mcp-tool-embed: model=${model} provider=${creds.provider} tools=${prepared.length}` +
-    ` fingerprint=name+description judge=${judgeId}@${judgeVersion}` +
+    ` fingerprint=full-tool-surface judge=${judgeId}@${judgeVersion}` +
     (useNexus ? " cache=nexus" : " cache=none"),
 );
 
@@ -294,7 +317,7 @@ if (prepared.length === 0) {
     provider: creds.provider,
     judgeId,
     judgeVersion,
-    embeddingInput: "name+description",
+    embeddingInput: "name+description+inputSchema",
     pendingCount: 0,
     cachedCount: 0,
     newCount: 0,
@@ -394,14 +417,27 @@ for (const batch of chunk(pending, batchSize)) {
         name: entry.name,
         toolFingerprint: entry.toolFingerprint,
         outcome: "pass",
-        summary: `Embedded with ${model} (name+description)`,
+        summary: `Embedded with ${model} (name+description+inputSchema)`,
         provider: creds.provider,
         model,
         report: {
-          toolEmbedding: vector,
-          embeddingModel: model,
-          embeddingInput: "name+description",
+          schemaVersion: "tool-embedding-report/v1",
+          reportId: randomUUID(),
+          tenantId,
+          profileVersion: judgeVersion,
+          toolName: entry.name,
+          inputDigest: entry.inputDigest,
+          provider: creds.provider,
+          model,
           dimensions: vector.length,
+          facets: { selection: vector },
+          source: {
+            kind: "github_actions",
+            runId: env("GITHUB_RUN_ID") || undefined,
+            sha: env("GITHUB_SHA") || undefined,
+          },
+          createdAt: new Date().toISOString(),
+          createdBy: "service:github-actions",
         },
         source: {
           kind: "github_actions",
@@ -468,7 +504,7 @@ const payload = {
   provider: creds.provider,
   judgeId,
   judgeVersion,
-  embeddingInput: "name+description",
+  embeddingInput: "name+description+inputSchema",
   pendingCount: pending.length,
   cachedCount: outputItems.filter((i) => i.source === "cache").length,
   newCount: newItems.filter((i) => i.outcome === "pass").length,

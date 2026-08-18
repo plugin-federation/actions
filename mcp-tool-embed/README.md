@@ -1,8 +1,8 @@
 # MCP tool embed
 
 Reusable Action that embeds each MCP tool with an embedding model and optionally
-memoizes results in Nexus so **name or description** changes re-embed, while
-schema / annotation-only changes do not.
+memoizes per-tool evidence in Nexus. Similarity reports are derived by Nexus,
+not by this Action.
 
 ```yaml
 - uses: plugin-federation/actions/mcp-tool-embed@main
@@ -22,20 +22,23 @@ schema / annotation-only changes do not.
 
 ## What is embedded?
 
-Only:
+Primary selection input:
 
 - `name`
 - `description` (empty string when absent)
+- canonical `inputSchema`
 
 Input text shape:
 
 ```text
 Tool name: {name}
 Description: {description}
+Input schema: {canonical JSON schema}
 ```
 
-`inputSchema`, `outputSchema`, and `annotations` are **not** part of the
-embedding input or the cache fingerprint.
+Output schema and annotations remain diagnostic fields; they are included in
+the Nexus-compatible fingerprint even though the primary embedding text uses
+the pre-call selection surface.
 
 ## Memoization (Nexus)
 
@@ -46,14 +49,13 @@ existing tool-analyses cache:
 |---|---|
 | `judgeId` | `tool-embedding` (reserved synthetic id; not a Console judge pack) |
 | `judgeVersion` | embedding model id |
-| `toolFingerprint` | `sha256` over `{ name, description }` only |
+| `toolFingerprint` | Nexus-compatible `sha256` over name, description, inputSchema, outputSchema, and annotations |
 | `outcome` | `pass` on success, `error` on failure |
-| `report.toolEmbedding` | float vector (Console similarity graph) |
+| `report.facets.selection` | float vector for the declared selection facet |
 
-- Same name+description + same model → **skip** (cache hit)
-- Name or description change → new fingerprint → **re-embed**
+- Same tool surface + same model → **skip** (cache hit)
+- Name, description, or schema change → new fingerprint → **re-embed**
 - Model change → new `judgeVersion` → **re-embed**
-- Schema-only change → fingerprint unchanged → **skip**
 
 Lookup does not return vectors; cache hits rehydrate embeddings via list
 analyses when building the local output file. Console always reads from Nexus.
@@ -81,5 +83,6 @@ OpenAI-compatible `POST {base}/embeddings`:
 ## Pipeline integration
 
 `mcp-tool-judge-pipeline` runs this Action when `embedding-model` is set, so
-embeddings stay independent of LLM-as-judge pending sets (full tool
-fingerprints).
+embeddings stay independent of LLM-as-judge pending sets. This Action posts
+per-tool embedding evidence only; Nexus owns cohort validation, pair scoring,
+risk calibration, clustering, and similarity reports.

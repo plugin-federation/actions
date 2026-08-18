@@ -59,9 +59,9 @@ inputs:
     default: "true"
   embedding-model:
     description: >-
-      When set, run mcp-tool-embed after catalog record. Embeddings use
-      name+description only and are memoized in Nexus separately from LLM
-      judges (schema-only changes do not re-embed).
+      When set, run mcp-tool-embed after catalog record. Embeddings use the
+      model-visible name, description, and input schema, and are memoized in
+      Nexus separately from LLM judges. Nexus derives similarity reports.
     required: false
     default: ""
   embedding-provider:
@@ -207,9 +207,10 @@ runs:
           echo "Console evidence: ${URL}"
         fi
 
-    - name: Embed tools (name + description)
+    - name: Embed tools (selection surface)
       id: embed
       if: ${{ inputs.embedding-model != '' }}
+      continue-on-error: true
       shell: bash
       env:
         INPUT_TOOLS_LIST_FILE: ${{ inputs.tools-list-file }}
