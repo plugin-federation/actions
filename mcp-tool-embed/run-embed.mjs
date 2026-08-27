@@ -303,6 +303,9 @@ const prepared = tools.map((rawTool) => {
   };
 });
 
+const profileId = "pipeline-tool-embedding";
+const profileVersion = model;
+const recipeVersion = "selection-v1";
 const judgeVersion = model;
 
 console.log(
@@ -317,6 +320,9 @@ if (prepared.length === 0) {
     provider: creds.provider,
     judgeId,
     judgeVersion,
+    profileId,
+    profileVersion,
+    recipeVersion,
     embeddingInput: "name+description+inputSchema",
     pendingCount: 0,
     cachedCount: 0,
@@ -424,12 +430,37 @@ for (const batch of chunk(pending, batchSize)) {
           schemaVersion: "tool-embedding-report/v1",
           reportId: randomUUID(),
           tenantId,
-          profileVersion: judgeVersion,
+          profileVersion,
+          recipeVersion,
           toolName: entry.name,
           inputDigest: entry.inputDigest,
           provider: creds.provider,
           model,
           dimensions: vector.length,
+          providerCapabilities: {
+            embeddings: true,
+            normalizedVectors: false,
+            supportsDimensionSelection: false,
+            maxDimensions: vector.length,
+          },
+          cohortIdentity: {
+            profileId,
+            profileVersion,
+            recipeVersion,
+            provider: creds.provider,
+            model,
+            dimensions: vector.length,
+            sourceKind: "github_actions",
+          },
+          ...(catalogDigest
+            ? {
+                scope: {
+                  kind: "catalog",
+                  id: sourceId,
+                  digest: catalogDigest,
+                },
+              }
+            : {}),
           facets: { selection: vector },
           source: {
             kind: "github_actions",
@@ -504,6 +535,9 @@ const payload = {
   provider: creds.provider,
   judgeId,
   judgeVersion,
+  profileId,
+  profileVersion,
+  recipeVersion,
   embeddingInput: "name+description+inputSchema",
   pendingCount: pending.length,
   cachedCount: outputItems.filter((i) => i.source === "cache").length,

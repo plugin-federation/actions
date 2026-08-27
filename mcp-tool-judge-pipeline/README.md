@@ -7,8 +7,9 @@ End-to-end CI step for an MCP `tools/list`:
    (`nexus-schema-verify`, default on) so Console Checks can join a
    `verificationId`. Discovers drafts that pin the source unless
    `baseline-plugin-id` is set. Skips with a warning when nothing pins the source.
-3. Optionally **embed tools** (`embedding-model`) — name + description only,
-   memoized separately so schema-only changes do not re-embed
+3. Optionally **embed tools** (`embedding-model`) — name, description, and
+  canonical input schema, memoized separately under a semantic profile so Nexus
+  can index pipeline-provided vectors for tool search
 4. Load **judge definitions** from Nexus (system prompts + `passThreshold`)
 5. Fingerprint tools, look up **pending** tools per judge
 6. Run the **LLM in GitHub Actions** with CI secrets
@@ -23,7 +24,11 @@ Judges return an **overallScore** from **0–100**. CI derives
 `outcome=pass` when `score >= passThreshold` (default **70**), else `fail`.
 
 Embeddings use [`mcp-tool-embed`](../mcp-tool-embed) with synthetic judge
-`tool-embedding` and a fingerprint of **name + description only**.
+`tool-embedding`, the embedding model as the cache/profile version, and a
+fingerprint of the full tool surface. Nexus natural-language search reads the
+recorded `tool-embedding-report/v1` rows from the pipeline; rerun the pipeline
+when a catalog lacks those embedding analyses or when the embedding model
+changes.
 
 ## Prerequisites
 

@@ -52,10 +52,18 @@ existing tool-analyses cache:
 | `toolFingerprint` | Nexus-compatible `sha256` over name, description, inputSchema, outputSchema, and annotations |
 | `outcome` | `pass` on success, `error` on failure |
 | `report.facets.selection` | float vector for the declared selection facet |
+| `report.cohortIdentity` | profile id/version, recipe version, provider, model, dimensions, and `github_actions` provenance |
+| `report.scope` | catalog scope when `catalog-digest` is supplied |
 
 - Same tool surface + same model → **skip** (cache hit)
 - Name, description, or schema change → new fingerprint → **re-embed**
 - Model change → new `judgeVersion` → **re-embed**
+
+Nexus natural-language tool search indexes these pipeline-provided
+`tool-embedding-report/v1` rows. The stored vectors and any query vector must
+share a compatible semantic cohort. For CI embeddings, the cohort is derived
+from the embedding model and provider; text-only query embedding is a
+Nexus/runtime concern. This Action only records per-tool vectors from CI.
 
 Lookup does not return vectors; cache hits rehydrate embeddings via list
 analyses when building the local output file. Console always reads from Nexus.
