@@ -65,6 +65,11 @@ share a compatible semantic cohort. For CI embeddings, the cohort is derived
 from the embedding model and provider; text-only query embedding is a
 Nexus/runtime concern. This Action only records per-tool vectors from CI.
 
+Before recording new embedding analyses, the Action ensures the corresponding
+non-active Nexus semantic profile exists for the embedding model and vector
+dimensions. If the pipeline principal cannot manage semantic profiles, an admin
+must register the profile once before embedding analyses can be recorded.
+
 Lookup does not return vectors; cache hits rehydrate embeddings via list
 analyses when building the local output file. Console always reads from Nexus.
 

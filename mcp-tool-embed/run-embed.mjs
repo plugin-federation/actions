@@ -195,6 +195,70 @@ async function nexusRecord({ nexusUrl, tenantId, sourceId, accessToken, body, re
   return text ? JSON.parse(text) : {};
 }
 
+async function nexusEnsureSemanticProfile({
+  nexusUrl,
+  tenantId,
+  accessToken,
+  provider,
+  model,
+  dimensions,
+}) {
+  const url = `${nexusUrl}/api/v1/tenants/${tenantId}/semantic-analysis/profiles`;
+  const profile = {
+    schemaVersion: "semantic-analysis-profile/v1",
+    profileId,
+    profileVersion,
+    tenantId,
+    provider,
+    model,
+    dimensions,
+    recipeVersion,
+    algorithmVersion: "cosine-v1",
+    facets: ["selection"],
+    active: false,
+    createdAt: new Date().toISOString(),
+    createdBy: "service:github-actions",
+    providerCapabilities: {
+      embeddings: true,
+      normalizedVectors: false,
+      supportsDimensionSelection: false,
+      supportsRerank: false,
+      maxDimensions: dimensions,
+    },
+    cohortIdentity: {
+      profileId,
+      profileVersion,
+      recipeVersion,
+      provider,
+      model,
+      dimensions,
+      sourceKind: "github_actions",
+    },
+    riskBands: {
+      low: 0.2,
+      medium: 0.5,
+      high: 0.8,
+    },
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+      accept: "application/json",
+      "x-request-id": `gha-embed-profile-${env("GITHUB_RUN_ID") || "0"}`,
+    },
+    body: JSON.stringify(profile),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(
+      `Nexus semantic profile registration HTTP ${res.status}: ${text.slice(0, 500)}`,
+    );
+  }
+  return text ? JSON.parse(text) : {};
+}
+
 /**
  * Rehydrate cached embeddings from Nexus list API (lookup does not return report).
  */
@@ -501,6 +565,20 @@ for (const batch of chunk(pending, batchSize)) {
 }
 
 if (useNexus && newItems.length > 0) {
+  const firstVector = newItems
+    .find((item) => item.outcome === "pass")
+    ?.report?.facets?.selection;
+  if (Array.isArray(firstVector) && firstVector.length > 0) {
+    await nexusEnsureSemanticProfile({
+      nexusUrl,
+      tenantId,
+      accessToken,
+      provider: creds.provider,
+      model,
+      dimensions: firstVector.length,
+    });
+    console.log(`Ensured Nexus semantic profile ${profileVersion} (${firstVector.length} dimensions)`);
+  }
   const body = {
     judgeId,
     judgeVersion,
