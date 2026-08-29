@@ -3,6 +3,11 @@
  * Run LLM-as-judge for pending tools using judge definitions from Nexus
  * and provider credentials from the environment (CI secrets).
  *
+ * System prompt: uses judge.effectiveSystemPrompt when present (tenant
+ * evaluation criteria plus the platform-owned output-contract instructions
+ * Nexus appends server-side), falling back to judge.systemPrompt for older
+ * Nexus responses that don't yet return effectiveSystemPrompt.
+ *
  * Env:
  *   INPUT_JUDGES_FILE, INPUT_LOOKUP_FILE, INPUT_FINGERPRINTS_FILE,
  *   INPUT_OUTPUT_FILE, INPUT_CATALOG_DIGEST, INPUT_SOURCE_ID
@@ -306,7 +311,9 @@ if (!creds.apiKey) {
 
 const model =
   env("JUDGE_MODEL") || judge.preferredModel || env("PROVIDER_MODEL") || "grok-3-mini";
-const systemPrompt = judge.systemPrompt;
+// effectiveSystemPrompt (tenant criteria + platform-owned output-contract instructions) is
+// authoritative; systemPrompt alone is a back-compat fallback for older Nexus responses.
+const systemPrompt = judge.effectiveSystemPrompt || judge.systemPrompt;
 const userTemplate =
   judge.userPromptTemplate ||
   "### Tool configuration\n{{tool_json}}";
