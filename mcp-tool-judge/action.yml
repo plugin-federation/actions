@@ -1,6 +1,6 @@
 name: "MCP tool LLM judge"
 description: >-
-  Run LLM-as-judge for pending tools using judge system prompts from Nexus and
+  Run LLM-as-judge for pending tools using judge instructions from Nexus and
   provider API keys from CI secrets.
 author: "Plugin Federation"
 branding:

@@ -3,10 +3,9 @@
  * Run LLM-as-judge for pending tools using judge definitions from Nexus
  * and provider credentials from the environment (CI secrets).
  *
- * System prompt: uses judge.effectiveSystemPrompt when present (tenant
- * evaluation criteria plus the platform-owned output-contract instructions
- * Nexus appends server-side), falling back to judge.systemPrompt for older
- * Nexus responses that don't yet return effectiveSystemPrompt.
+ * Instructions: uses judge.effectiveInstructions (tenant evaluation criteria
+ * plus the platform-owned output-contract instructions Nexus appends
+ * server-side). Nexus always serializes this field.
  *
  * Env:
  *   INPUT_JUDGES_FILE, INPUT_LOOKUP_FILE, INPUT_FINGERPRINTS_FILE,
@@ -297,6 +296,12 @@ if (!judge) {
   console.error(`Judge not found in judges file: ${judgeId}`);
   process.exit(1);
 }
+if (typeof judge.effectiveInstructions !== "string" || judge.effectiveInstructions.trim() === "") {
+  console.error(
+    `Judge ${judgeId} response is missing effectiveInstructions; nexus-list-tool-judges must be run against a Nexus version that serializes it.`,
+  );
+  process.exit(1);
+}
 
 const passThreshold = resolvePassThreshold(judge);
 const warnThreshold = resolveWarnThreshold(judge, passThreshold);
@@ -311,9 +316,7 @@ if (!creds.apiKey) {
 
 const model =
   env("JUDGE_MODEL") || judge.preferredModel || env("PROVIDER_MODEL") || "grok-3-mini";
-// effectiveSystemPrompt (tenant criteria + platform-owned output-contract instructions) is
-// authoritative; systemPrompt alone is a back-compat fallback for older Nexus responses.
-const systemPrompt = judge.effectiveSystemPrompt || judge.systemPrompt;
+const instructions = judge.effectiveInstructions;
 const userTemplate =
   judge.userPromptTemplate ||
   "### Tool configuration\n{{tool_json}}";
@@ -350,7 +353,7 @@ for (const p of pending) {
       content = await callAnthropic({
         apiKey: creds.apiKey,
         model,
-        system: systemPrompt,
+        system: instructions,
         user,
         baseUrl: creds.baseUrl,
       });
@@ -362,7 +365,7 @@ for (const p of pending) {
         baseUrl: creds.baseUrl,
         apiKey: creds.apiKey,
         model,
-        system: systemPrompt,
+        system: instructions,
         user,
       });
     }

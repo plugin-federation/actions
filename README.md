@@ -32,10 +32,10 @@ uses: plugin-federation/actions/anthropic-mcp-eval@main
 
 ### LLM-as-judge (CI execution, Nexus definitions)
 
-1. **Tenant admin** creates judges on Nexus (`systemPrompt`, `version`, etc.).
+1. **Tenant admin** creates judges on Nexus (`instructions`, `version`, etc.).
 2. **CI** loads judges + fingerprints, asks Nexus what is pending, runs the
    model with **CI secrets**, records results.
-3. MCP repos **do not** copy system prompts.
+3. MCP repos **do not** copy instructions.
 
 ```yaml
 permissions:

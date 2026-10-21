@@ -1,6 +1,6 @@
 name: "Nexus list tool judges"
 description: >-
-  Fetch tenant tool-judge definitions (system prompts, templates, preferred
+  Fetch tenant tool-judge definitions (instructions, templates, preferred
   model hints) from Nexus. Model API keys stay in CI.
 author: "Plugin Federation"
 branding:
