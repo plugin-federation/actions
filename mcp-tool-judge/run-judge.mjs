@@ -194,7 +194,7 @@ async function callOpenAiCompatible({ baseUrl, apiKey, model, system, user }) {
       model,
       temperature: 0,
       messages: [
-        { role: "system", content: system },
+        ...(system ? [{ role: "system", content: system }] : []),
         { role: "user", content: user },
       ],
     }),
