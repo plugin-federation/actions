@@ -90,7 +90,9 @@ runs:
       shell: bash
       # mcp 2.0 removed streamablehttp_client (and FastMCP under mcp.server.fastmcp).
       # Pin the 1.x client API used by connections.py and FastMCP-based servers.
-      run: pip install litellm 'mcp>=1.0.0,<2'
+      # litellm >=1.106 imports CacheableResult from mcp.types, which only exists in
+      # mcp 2.x, so cap below 1.106 to stay compatible with the mcp 1.x pin.
+      run: pip install 'litellm<1.106' 'mcp>=1.0.0,<2'
 
     - name: Run evaluations (stdio)
       if: inputs.transport == 'stdio'
