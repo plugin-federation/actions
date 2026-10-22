@@ -379,41 +379,72 @@ async def evaluate_single_task(
     }
 
 
-REPORT_HEADER = """
-# Evaluation Report
+def _md_cell(value: object) -> str:
+    """Flatten a value so it is safe inside a GitHub-flavored markdown table cell."""
+    text = " ".join(str(value if value is not None else "").split())
+    return text.replace("|", "\\|")
 
-## Summary
 
-- **Accuracy**: {correct}/{total} ({accuracy:.1f}%)
-- **Average Task Duration**: {average_duration_s:.2f}s
-- **Average Tool Calls per Task**: {average_tool_calls:.2f}
-- **Total Tool Calls**: {total_tool_calls}
+def _format_duration(seconds: float) -> str:
+    if seconds < 1:
+        return f"{seconds * 1000:.0f}ms"
+    return f"{seconds:.2f}s"
 
----
-"""
 
-TASK_TEMPLATE = """
-### Task
-{task_num}
+def _format_tool_calls(tool_calls: dict[str, Any]) -> str:
+    if not tool_calls:
+        return "_None_"
+    rows = ["| Tool | Calls | Duration |", "| --- | ---: | ---: |"]
+    for name, metrics in tool_calls.items():
+        count = metrics.get("count", 0)
+        durations = metrics.get("durations") or []
+        total = sum(float(item) for item in durations)
+        rows.append(f"| `{_md_cell(name)}` | {count} | {_format_duration(total)} |")
+    return "\n".join(rows)
 
-**Question**: {question}
-**Ground Truth Answer**:
-`{expected_answer}`
-**Actual Answer**: `{actual_answer}`
-**Correct**:
-{correct_indicator}
-**Duration**: {total_duration:.2f}s
-**Tool Calls**:
-{tool_calls}
 
-**Summary**
-{summary}
+def _format_task_section(task_num: int, qa_pair: dict[str, str], result: dict[str, Any]) -> str:
+    passed = bool(result["score"])
+    indicator = "pass" if passed else "fail"
+    question = qa_pair["question"].strip()
+    expected = qa_pair["answer"]
+    actual = result["actual"] or "(empty)"
+    parts = [
+        f"### {task_num}. {indicator}",
+        "",
+        question,
+        "",
+        f"**Expected** `{_md_cell(expected)}` · **Actual** `{_md_cell(actual)}` · {_format_duration(result['total_duration'])}",
+        "",
+        _format_tool_calls(result["tool_calls"]),
+    ]
+    summary = (result.get("summary") or "").strip()
+    feedback = (result.get("feedback") or "").strip()
+    if summary:
+        parts.extend(["", "<details><summary>Model summary</summary>", "", summary, "", "</details>"])
+    if feedback:
+        parts.extend(["", "<details><summary>Tool feedback</summary>", "", feedback, "", "</details>"])
+    parts.extend(["", "---", ""])
+    return "\n".join(parts)
 
-**Feedback**
-{feedback}
 
----
-"""
+def _format_overview_table(qa_pairs: list[dict[str, str]], results: list[dict[str, Any]]) -> str:
+    rows = [
+        "| # | Result | Question | Expected | Actual | Duration |",
+        "| ---: | --- | --- | --- | --- | ---: |",
+    ]
+    for index, (qa_pair, result) in enumerate(zip(qa_pairs, results), start=1):
+        rows.append(
+            "| {num} | {result} | {question} | `{expected}` | `{actual}` | {duration} |".format(
+                num=index,
+                result="pass" if result["score"] else "fail",
+                question=_md_cell(qa_pair["question"]),
+                expected=_md_cell(qa_pair["answer"]),
+                actual=_md_cell(result["actual"] or "(empty)"),
+                duration=_format_duration(result["total_duration"]),
+            )
+        )
+    return "\n".join(rows)
 
 
 async def run_evaluation(
@@ -472,29 +503,27 @@ async def run_evaluation(
     average_tool_calls = sum(r["num_tool_calls"] for r in results) / len(results) if results else 0
     total_tool_calls = sum(r["num_tool_calls"] for r in results)
 
-    report = REPORT_HEADER.format(
-        correct=correct,
-        total=len(results),
-        accuracy=accuracy,
-        average_duration_s=average_duration_s,
-        average_tool_calls=average_tool_calls,
-        total_tool_calls=total_tool_calls,
+    report = "\n".join(
+        [
+            "# Evaluation Report",
+            "",
+            f"- **Accuracy**: {correct}/{len(results)} ({accuracy:.1f}%)",
+            f"- **Average task duration**: {_format_duration(average_duration_s)}",
+            f"- **Average tool calls per task**: {average_tool_calls:.2f}",
+            f"- **Total tool calls**: {total_tool_calls}",
+            "",
+            "## Tasks",
+            "",
+            _format_overview_table(qa_pairs, results),
+            "",
+            "## Details",
+            "",
+        ]
     )
-
-    report += "".join([
-        TASK_TEMPLATE.format(
-            task_num=i + 1,
-            question=qa_pair["question"],
-            expected_answer=qa_pair["answer"],
-            actual_answer=result["actual"] or "N/A",
-            correct_indicator="✅" if result["score"] else "❌",
-            total_duration=result["total_duration"],
-            tool_calls=json.dumps(result["tool_calls"], indent=2),
-            summary=result["summary"] or "N/A",
-            feedback=result["feedback"] or "N/A",
-        )
-        for i, (qa_pair, result) in enumerate(zip(qa_pairs, results))
-    ])
+    report += "".join(
+        _format_task_section(index, qa_pair, result)
+        for index, (qa_pair, result) in enumerate(zip(qa_pairs, results), start=1)
+    )
 
     print(f"\n{'='*60}")
     print(f"✅ Evaluation complete: {correct}/{len(results)} correct ({accuracy:.1f}%)")
