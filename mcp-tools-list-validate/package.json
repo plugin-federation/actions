@@ -21,7 +21,7 @@
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "canonicalize": "^3.0.0",
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "typescript": "^5.8.3"
   }
 }
