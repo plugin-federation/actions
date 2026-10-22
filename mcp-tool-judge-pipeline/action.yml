@@ -427,6 +427,15 @@ runs:
               + (if $sha != "" then { sha: $sha } else {} end)
               + (if $repositoryId != "" then { repositoryId: $repositoryId } else {} end);
 
+            # Nexus rejects assessment reports with fields outside the contract
+            # schema. Keep only the allowed fields, including ones cached from
+            # earlier runs (e.g. passThreshold/warnThreshold recorded pre-fix).
+            def clean_report:
+              with_entries(
+                select(.key as $k |
+                  ["overallScore", "summary", "criticalIssues", "minorImprovements", "optimizedVersion"] | index($k))
+              );
+
             ($results[0].items // []) as $new
             | ($new | map(.name)) as $new_names
             | ($lookup[0].analyzed // []
@@ -444,7 +453,7 @@ runs:
                     + (if (.summary != null and .summary != "") then { summary: .summary }
                        else { summary: "Reused from Nexus analysis cache for this pipeline run (original opinion unavailable from lookup)" }
                        end)
-                    + (if .report != null then { report: .report } else {} end)
+                    + (if .report != null then { report: (.report | clean_report) } else {} end)
                     + (if .provider != null and .provider != "" then { provider: .provider } else {} end)
                     + (if .model != null and .model != "" then { model: .model } else {} end)
                   )
@@ -452,7 +461,7 @@ runs:
             | {
                 judgeId: $judgeId,
                 judgeVersion: $judgeVersion,
-                items: ($new + $stamped)
+                items: (($new + $stamped) | map(.report as $r | if $r != null then .report = ($r | clean_report) else . end))
               }
               + (if $catalogDigest != "" then { catalogDigest: $catalogDigest } else {} end)
             ' > "$RECORD_BODY"

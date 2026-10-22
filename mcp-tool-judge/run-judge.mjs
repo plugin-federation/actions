@@ -159,25 +159,23 @@ function parseJudgeResponse(content, passThreshold, warnThreshold) {
     summary = content.slice(0, 8000);
   }
 
+  // The recorded `report` must match Nexus's assessment-report schema
+  // (overallScore, summary, criticalIssues, minorImprovements, optimizedVersion).
+  // Thresholds are CI-owned metadata, not part of that schema — surface them in
+  // `summary` (an allowed field) instead of injecting them into `report`.
+  const thresholds =
+    ` (pass ≥ ${passThreshold}` +
+    (warnThreshold !== null ? `, warn ≥ ${warnThreshold}` : "") +
+    `)`;
   return {
     outcome,
     score: score === null ? undefined : score,
-    summary,
+    summary: `${summary}${thresholds}`.slice(0, 8000),
     report:
       report && typeof report === "object"
-        ? {
-            ...report,
-            overallScore: score ?? report.overallScore,
-            passThreshold,
-            warnThreshold,
-          }
+        ? { ...report, overallScore: score ?? report.overallScore }
         : score !== null
-          ? {
-              overallScore: score,
-              passThreshold,
-              warnThreshold,
-              raw: content.slice(0, 4000),
-            }
+          ? { overallScore: score, summary: content.slice(0, 4000) }
           : undefined,
   };
 }
